@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+
+# Token storage (contains sensitive authentication tokens)
+token.json
+~/.voe/token.json
+
+# Debug files
+*.dSYM/
+
+# Backup files
+*.bak
+*.backup

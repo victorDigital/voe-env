@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1769443776066,
+      "tag": "0000_unknown_shiver_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1769444422470,
+      "tag": "0001_chief_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1769445011607,
+      "tag": "0002_easy_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1769445818383,
+      "tag": "0003_fair_blindfold",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1769452030372,
+      "tag": "0004_motionless_killraven",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1769453301705,
+      "tag": "0005_daffy_magik",
+      "breakpoints": true
+    }
+  ]
+}

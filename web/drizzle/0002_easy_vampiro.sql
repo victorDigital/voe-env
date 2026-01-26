@@ -1,0 +1,1 @@
+ALTER TABLE `env_path` ADD `salt` text NOT NULL;
