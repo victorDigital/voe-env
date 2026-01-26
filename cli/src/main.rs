@@ -1,9 +1,26 @@
+use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
+
+#[derive(Parser)]
+#[command(name = "ve")]
+#[command(about = "VOE CLI - Environment Vault CLI", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Authenticate with the VOE server
+    Auth,
+    /// Test the protected API endpoint
+    Test,
+}
 
 #[derive(Serialize, Deserialize)]
 struct DeviceAuthRequest {
@@ -68,7 +85,7 @@ fn load_token() -> Option<TokenStorage> {
     if !path.exists() {
         return None;
     }
-    
+
     match fs::read_to_string(&path) {
         Ok(content) => {
             match serde_json::from_str::<TokenStorage>(&content) {
@@ -102,9 +119,13 @@ fn save_token(token: &TokenStorage) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn get_base_url() -> String {
+    env::var("VOE_BASE_URL").unwrap_or_else(|_| "http://localhost:5173".to_string())
+}
+
 async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std::error::Error>> {
     let client = Client::new();
-    
+
     // Step 1: Request device authorization
     let device_req = DeviceAuthRequest {
         client_id: "voe-cli".to_string(),
@@ -132,7 +153,7 @@ async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std
     };
 
     let mut polling_interval = response.interval;
-    
+
     loop {
         sleep(Duration::from_secs(polling_interval)).await;
 
@@ -145,20 +166,20 @@ async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std
         if verify_response.status().is_success() {
             let tokens: DeviceVerifyResponse = verify_response.json().await?;
             println!("✅ Authorization successful!");
-            
+
             // Calculate expiration time
             let expires_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs()
                 + tokens.expires_in;
-            
+
             let token_storage = TokenStorage {
                 access_token: tokens.access_token,
                 refresh_token: tokens.refresh_token,
                 expires_at: Some(expires_at),
             };
-            
+
             return Ok(token_storage);
         } else if verify_response.status() == 400 {
             // Parse error response
@@ -180,8 +201,11 @@ async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std
                         return Err("The device code has expired. Please try again.".into());
                     }
                     _ => {
-                        return Err(format!("Authorization failed: {}", 
-                            error_data.error_description.unwrap_or(error_data.error)).into());
+                        return Err(format!(
+                            "Authorization failed: {}",
+                            error_data.error_description.unwrap_or(error_data.error)
+                        )
+                        .into());
                     }
                 }
             } else {
@@ -197,7 +221,7 @@ async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std
 
 async fn test_api(base_url: &str, token: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    
+
     let response = client
         .get(&format!("{}/api/test", base_url))
         .header("Authorization", format!("Bearer {}", token))
@@ -223,9 +247,19 @@ async fn test_api(base_url: &str, token: &str) -> Result<(), Box<dyn std::error:
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = env::var("VOE_BASE_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
+async fn cmd_auth() -> Result<(), Box<dyn std::error::Error>> {
+    let base_url = get_base_url();
+
+    println!("🔑 Starting authentication...");
+    let token = authenticate_device(&base_url).await?;
+    save_token(&token)?;
+    println!("💾 Token saved for future use");
+
+    Ok(())
+}
+
+async fn cmd_test() -> Result<(), Box<dyn std::error::Error>> {
+    let base_url = get_base_url();
 
     // Try to load existing token
     let token_storage = match load_token() {
@@ -246,6 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match test_api(&base_url, &token_storage.access_token).await {
         Ok(_) => {
             // Token is valid, all good
+            Ok(())
         }
         Err(e) => {
             // Token might be invalid, try to re-authenticate
@@ -255,14 +290,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let new_token = authenticate_device(&base_url).await?;
                 save_token(&new_token)?;
                 println!("💾 New token saved");
-                
+
                 // Try API again with new token
-                test_api(&base_url, &new_token.access_token).await?;
+                test_api(&base_url, &new_token.access_token).await
             } else {
-                return Err(e);
+                Err(e)
             }
         }
     }
+}
 
-    Ok(())
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    match &cli.command {
+        Commands::Auth => cmd_auth().await,
+        Commands::Test => cmd_test().await,
+    }
 }

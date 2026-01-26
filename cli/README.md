@@ -5,27 +5,79 @@ A minimal command-line interface for interacting with the VOE environment vault.
 ## Features
 
 - Device authorization flow for secure authentication
+- Token persistence (no need to login every time)
+- Protected API testing
 - Minimal dependencies for easy deployment
 
-## Building
+## Installation
 
-Ensure you have Rust installed. Then:
+### Quick Install
 
 ```bash
 cd cli
-cargo build --release
+./install.sh
 ```
 
-## Running
+This will build and install the CLI as the `ve` command globally.
+
+### Manual Installation
 
 ```bash
-./target/release/voe-cli
+cd cli
+make install
+# or
+cargo build --release
+sudo cp target/release/ve /usr/local/bin/ve
+sudo chmod +x /usr/local/bin/ve
 ```
 
-The CLI will guide you through the device authorization process:
-1. Visit the provided URL
-2. Enter the user code
-3. The CLI will poll for authorization and display the access token upon success
+## Usage
+
+Once installed, you can use the `ve` command:
+
+```bash
+# Authenticate with the server
+ve auth
+
+# Test the protected API endpoint
+ve test
+```
+
+The `ve test` command will automatically authenticate if no valid token is found.
+
+## Building
+
+### Quick Build
+
+```bash
+cd cli
+./build.sh
+# or
+make build
+```
+
+### Development Build
+
+```bash
+cd cli
+make dev
+# or
+cargo build
+```
+
+### Rebuild and Reinstall
+
+```bash
+cd cli
+make reinstall
+# or
+make clean && make install
+```
+
+## Commands
+
+- `ve auth` - Authenticate with the VOE server using device authorization
+- `ve test` - Test the protected API endpoint (auto-authenticates if needed)
 
 ## Configuration
 
@@ -33,9 +85,16 @@ Set the `VOE_BASE_URL` environment variable to match your server URL (default: h
 
 ```bash
 export VOE_BASE_URL=https://your-server.com
-./target/release/voe-cli
+ve auth
 ```
+
+## Token Storage
+
+Tokens are stored in `~/.voe/token.json` and are automatically:
+- Loaded on startup
+- Validated for expiration
+- Refreshed if invalid
 
 ## Security
 
-This CLI uses Better Auth's device authorization plugin for secure, OAuth-like authentication without storing credentials locally.
+This CLI uses Better Auth's device authorization plugin for secure, OAuth-like authentication. Tokens are stored locally but are never committed to git (see `.gitignore`).
