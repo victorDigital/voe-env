@@ -36,6 +36,14 @@ sudo chmod +x /usr/local/bin/ve
 Once installed, you can use the `ve` command:
 
 ```bash
+# Initialize VOE in the current directory
+ve init
+# or with arguments
+ve init --path org:product:dev --password mypassword
+
+# Push .env file to the vault
+ve push
+
 # Authenticate with the server
 ve auth
 
@@ -76,7 +84,21 @@ make clean && make install
 
 ## Commands
 
+- `ve init` - Initialize VOE in the current directory
+  - `--path, -p` - Vault path (e.g., org:product:dev)
+  - `--password, -P` - Vault password/lock
+  - If not provided, will prompt for input
+  - Creates/updates `.env` file with `VE_VAULT_KEYPASS=path;password`
+  - Skips if `.env` already contains `VE_VAULT_KEYPASS`
+
+- `ve push` - Push .env file to the online vault
+  - Reads `.env` file from current directory
+  - Encrypts all environment variables using the vault password
+  - Uploads encrypted values to the server
+  - Requires authentication (auto-authenticates if needed)
+
 - `ve auth` - Authenticate with the VOE server using device authorization
+
 - `ve test` - Test the protected API endpoint (auto-authenticates if needed)
 
 ## Configuration
