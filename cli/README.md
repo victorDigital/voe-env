@@ -72,14 +72,34 @@ make dev
 # or
 cargo build
 ```
+# VOE CLI
 
-### Rebuild and Reinstall
+VOE (Vault of Environments) CLI - Secure environment variable management with online vault storage.
+
+## Installation
 
 ```bash
-cd cli
-make reinstall
-# or
-make clean && make install
+cargo install --path .
+```
+
+## .env.example Synchronization
+
+The CLI automatically keeps `.env.example` files in sync with your local environment variables:
+
+- **Never creates** `.env.example` - only updates it if it already exists
+- **Keys only** - stores environment variable keys with placeholder values (`xxx`)
+- **Auto-sync** - updated whenever `.env` is modified (init, pull, change-password)
+- **Preserves structure** - maintains existing comments and formatting in `.env.example`
+
+Example `.env.example`:
+```bash
+# Database configuration
+DATABASE_URL=xxx
+DB_USER=xxx
+
+# API settings
+API_KEY=xxx
+DEBUG=xxx
 ```
 
 ## Commands
@@ -88,14 +108,33 @@ make clean && make install
   - `--path, -p` - Vault path (e.g., org:product:dev)
   - `--password, -P` - Vault password/lock
   - If not provided, will prompt for input
-  - Creates/updates `.env` file with `VE_VAULT_KEYPASS=path;password`
+  - Creates/updates `.env` file with `VE_VAULT_KEYPASS=path+password`
+  - Updates `.env.example` if it exists
   - Skips if `.env` already contains `VE_VAULT_KEYPASS`
 
 - `ve push` - Push .env file to the online vault
+  - `--force` - Force push - delete server variables not present locally (requires confirmation)
   - Reads `.env` file from current directory
   - Encrypts all environment variables using the vault password
   - Uploads encrypted values to the server
   - Requires authentication (auto-authenticates if needed)
+
+- `ve pull` - Pull .env file from the online vault
+  - `--force` - Force replace with server version, may delete unsynced variables
+  - `-p, --path` - Vault path (e.g., org:product:dev) - initializes if .env doesn't exist
+  - `-P, --password` - Vault password/lock - initializes if .env doesn't exist
+  - If .env doesn't exist and path/password are provided, initializes the project first
+  - Merges server variables with local ones (update mode) or replaces completely (force mode)
+  - Updates `.env.example` if it exists
+  - Requires authentication (auto-authenticates if needed)
+
+- `ve change-password` - Change vault password (only if local and server are identical)
+  - `-P, --password` - New vault password/lock
+  - If not provided, will prompt for input
+  - Verifies local and server environments are exactly the same
+  - Re-encrypts all variables with new password and uploads to server
+  - Updates local `.env` file with new password
+  - Updates `.env.example` if it exists
 
 - `ve auth` - Authenticate with the VOE server using device authorization
 

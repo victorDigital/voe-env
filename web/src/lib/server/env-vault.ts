@@ -72,6 +72,28 @@ export async function getAllEnv(userId: string): Promise<Record<string, string>>
 	return envs;
 }
 
+export async function getVaultEnv(
+	userId: string,
+	vaultPath: string
+): Promise<Record<string, string>> {
+	const searchPrefix = vaultPath ? `${vaultPath}:` : '';
+	const results = await db
+		.select({ fullKey: envVault.fullKey, encryptedValue: envVault.encryptedValue })
+		.from(envVault)
+		.where(and(eq(envVault.userId, userId), like(envVault.fullKey, `${searchPrefix}%`)));
+
+	const envs: Record<string, string> = {};
+	for (const { fullKey, encryptedValue } of results) {
+		// Extract the key part after the vault path prefix
+		const key = vaultPath ? fullKey.slice(searchPrefix.length) : fullKey;
+		// Only include direct children (no nested paths)
+		if (!key.includes(':')) {
+			envs[key] = encryptedValue;
+		}
+	}
+	return envs;
+}
+
 export async function deleteEnv(userId: string, fullKey: string): Promise<void> {
 	await db.delete(envVault).where(and(eq(envVault.userId, userId), eq(envVault.fullKey, fullKey)));
 }
