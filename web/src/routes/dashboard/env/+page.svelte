@@ -91,6 +91,27 @@
 		decryptedEnvs = newDecrypted;
 	}
 
+	function b64ByteLength(b64: string): number {
+		let len = b64.length;
+		let padding = 0;
+		if (b64.endsWith('==')) padding = 2;
+		else if (b64.endsWith('=')) padding = 1;
+		return (len * 3) / 4 - padding;
+	}
+
+	function estimateLength(encrypted: string): number {
+		console.log('Estimating length for:', encrypted);
+		if (typeof encrypted !== 'string' || !encrypted) return 0;
+		try {
+			const combinedLength = b64ByteLength(encrypted);
+			const dataLength = combinedLength - 12;
+			const plaintextLength = dataLength - 16;
+			return Math.max(0, plaintextLength);
+		} catch {
+			return 0;
+		}
+	}
+
 	function navigateTo(path: string) {
 		goto(`?path=${encodeURIComponent(path)}`);
 	}
@@ -137,6 +158,10 @@
 			await update();
 		};
 	};
+
+	function getLockedString(length: number): string {
+		return '•'.repeat(Math.min(length, 20));
+	}
 
 	function deleteItem(name: string) {
 		deleteKey = currentPath ? `${currentPath}:${name}` : name;
@@ -194,11 +219,18 @@
 							</button>
 						{:else}
 							<span>🔑</span>
-							<span
+							<span>
+								{#if decryptedEnvs[item.name]}
+									{item.name}: {decryptedEnvs[item.name]}
+								{:else}
+									{item.name}: {getLockedString(estimateLength(encryptedEnvs[item.name]))}
+								{/if}
+							</span>
+							<!-- <span
 								>{item.name}: {decryptedEnvs[
 									currentPath ? `${currentPath}:${item.name}` : item.name
-								] || 'Locked'}</span
-							>
+								] || `${estimateLength(encryptedEnvs[item.name])} chars)`}</span
+							> -->
 							<button
 								class="rounded bg-red-500 px-2 py-1 text-sm text-white"
 								onclick={() => deleteItem(item.name)}

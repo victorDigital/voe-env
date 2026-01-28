@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { listEnv, setEnv, getEnv, deleteEnv, getAllEnv } from '$lib/server/env-vault';
+import { listEnv, setEnv, getEnv, deleteEnv, getVaultEnv } from '$lib/server/env-vault';
 
 export const load = async ({ locals, url }: any) => {
 	// Ensure user is authenticated
@@ -9,13 +9,14 @@ export const load = async ({ locals, url }: any) => {
 
 	const path = url.searchParams.get('path') || '';
 	const items = await listEnv(locals.user.id, path);
+	console.log('Loaded env items:', await getVaultEnv(locals.user.id, path));
 
 	return {
 		session: locals.session,
 		user: locals.user,
 		path,
 		items,
-		encryptedEnvs: await getAllEnv(locals.user.id)
+		encryptedEnvs: await getVaultEnv(locals.user.id, path)
 	};
 };
 

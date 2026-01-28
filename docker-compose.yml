@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=file:/data/local.db
+    volumes:
+      - db_data:/data
+
+volumes:
+  db_data:

@@ -6,7 +6,7 @@ use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, Subcommand};
 use pbkdf2::pbkdf2_hmac;
 use rand::rngs::OsRng;
-use reqwest::Client;
+use reqwest::{get, Client};
 use rpassword;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -15,6 +15,7 @@ use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -40,6 +41,9 @@ enum Commands {
         /// Vault password/lock
         #[arg(short, long)]
         password: Option<String>,
+        /// git mode, sets the vault path based on git info
+        #[arg(long)]
+        git: bool,
     },
     /// Push .env file to the online vault
     Push {
@@ -65,6 +69,8 @@ enum Commands {
         #[arg(short = 'P', long)]
         password: Option<String>,
     },
+    /// Display current user info
+    Whoami,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,11 +115,24 @@ struct TokenStorage {
     expires_at: Option<u64>, // Unix timestamp
 }
 
+#[derive(Deserialize, Serialize)]
+struct User {
+    email: String,
+    id: String,
+    name: String,
+}
+
+struct GitInfo {
+    repo: String,
+    org: String,
+    branch: String,
+}
+
 #[derive(Deserialize)]
 struct TestApiResponse {
     success: bool,
     message: Option<String>,
-    user: Option<serde_json::Value>,
+    user: Option<User>,
     error: Option<String>,
 }
 
@@ -290,7 +309,7 @@ async fn get_or_authenticate_token() -> Result<TokenStorage, Box<dyn std::error:
 }
 
 fn get_base_url() -> String {
-    env::var("VOE_BASE_URL").unwrap_or_else(|_| "http://localhost:5173".to_string())
+    env::var("VOE_BASE_URL").unwrap_or_else(|_| "https://env.voe.dk".to_string())
 }
 
 async fn make_authenticated_request<T: Serialize, R: for<'de> Deserialize<'de>>(
@@ -570,6 +589,7 @@ async fn cmd_test() -> Result<(), Box<dyn std::error::Error>> {
 fn cmd_init(
     path: Option<String>,
     password: Option<String>,
+    git: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env_path = get_env_path();
     if env_path.exists() {
@@ -580,12 +600,26 @@ fn cmd_init(
         }
     }
 
-    let vault_path =
-        path.unwrap_or_else(|| prompt_input("Enter vault path (e.g., org:product:dev): ").unwrap());
+    let git_info = if git {
+        get_git_info_on_path(&env::current_dir().unwrap())
+    } else {
+        GitInfo {
+            org: String::new(),
+            repo: String::new(),
+            branch: String::new(),
+        }
+    };
+
+    let vault_path = if git {
+        format!("{}:{}:{}", git_info.org, git_info.repo, git_info.branch)
+    } else {
+        path.unwrap_or_else(|| prompt_input("Enter vault path (e.g., org:product:dev): ").unwrap())
+    };
     if vault_path.is_empty() {
         return Err("Vault path cannot be empty".into());
     }
 
+    println!("🔒 Set vault password/lock:");
     let vault_password = password.unwrap_or_else(|| read_password().unwrap());
     if vault_password.is_empty() {
         return Err("Vault password cannot be empty".into());
@@ -604,6 +638,88 @@ fn cmd_init(
     println!("✅ VOE initialized successfully!");
     println!("   Vault path: {}", vault_path);
     Ok(())
+}
+
+fn get_git_info_on_path(path: &PathBuf) -> GitInfo {
+    // Get remote URL
+    let url_output = Command::new("git")
+        .arg("config")
+        .arg("--get")
+        .arg("remote.origin.url")
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git config command");
+
+    if !url_output.status.success() {
+        panic!("Failed to get git remote URL. Ensure you are in a git repository with a remote origin set.");
+    }
+
+    let url = String::from_utf8_lossy(&url_output.stdout)
+        .trim()
+        .to_string();
+    if url.is_empty() {
+        panic!("Git remote URL is empty. Ensure remote origin is configured.");
+    }
+
+    // Parse org and repo from URL
+    if !url.contains("github.com") {
+        panic!(
+            "Only GitHub repositories are supported. Remote URL: {}",
+            url
+        );
+    }
+
+    let (org, repo) = if url.contains("https://") {
+        // https://github.com/org/repo.git
+        let parts: Vec<&str> = url.split('/').collect();
+        if parts.len() < 3 {
+            panic!("Invalid GitHub HTTPS URL format: {}", url);
+        }
+        let org = parts[parts.len() - 2].to_string();
+        let repo_with_git = parts.last().unwrap();
+        let repo = repo_with_git
+            .strip_suffix(".git")
+            .unwrap_or(repo_with_git)
+            .to_string();
+        (org, repo)
+    } else if url.contains('@') {
+        // git@github.com:org/repo.git
+        let after_colon = url.split(':').nth(1).expect("Invalid SSH URL format");
+        let parts: Vec<&str> = after_colon.split('/').collect();
+        if parts.len() < 2 {
+            panic!("Invalid GitHub SSH URL format: {}", url);
+        }
+        let org = parts[0].to_string();
+        let repo_with_git = parts[1];
+        let repo = repo_with_git
+            .strip_suffix(".git")
+            .unwrap_or(repo_with_git)
+            .to_string();
+        (org, repo)
+    } else {
+        panic!("Unsupported GitHub URL format: {}", url);
+    };
+
+    // Get current branch
+    let branch_output = Command::new("git")
+        .arg("branch")
+        .arg("--show-current")
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git branch command");
+
+    if !branch_output.status.success() {
+        panic!("Failed to get current git branch. Ensure you are on a valid branch.");
+    }
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .to_string();
+    if branch.is_empty() {
+        panic!("Current branch is empty. Ensure you are on a valid branch.");
+    }
+
+    GitInfo { repo, org, branch }
 }
 
 async fn cmd_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -727,7 +843,7 @@ async fn cmd_pull(
     let env_path = get_env_path();
     if !env_path.exists() {
         if let (Some(vault_path), Some(vault_password)) = (path, password) {
-            cmd_init(Some(vault_path), Some(vault_password))?;
+            cmd_init(Some(vault_path), Some(vault_password), false)?;
         } else {
             return Err(
                 ".env file not found. Run 've init' first or provide -p and -P to initialize."
@@ -835,13 +951,35 @@ async fn cmd_change_password(
     }
 }
 
+async fn cmd_whoami() -> Result<(), Box<dyn std::error::Error>> {
+    let base_url = get_base_url();
+    let api_response: TestApiResponse = make_authenticated_request(
+        reqwest::Method::GET,
+        &format!("{}/api/test", base_url),
+        None::<&()>,
+    )
+    .await?;
+    if let Some(user) = api_response.user {
+        println!("Current User Info:");
+        println!("✉  User Email {}", user.email);
+        println!("👤 User Name: {}", user.name);
+    } else {
+        eprintln!("Failed to retrieve user info.");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match &cli.command {
         Commands::Auth => cmd_auth().await,
         Commands::Test => cmd_test().await,
-        Commands::Init { path, password } => cmd_init(path.clone(), password.clone()),
+        Commands::Init {
+            path,
+            password,
+            git,
+        } => cmd_init(path.clone(), password.clone(), git.clone()),
         Commands::Push { force } => cmd_push(*force).await,
         Commands::Pull {
             force,
@@ -849,5 +987,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             password,
         } => cmd_pull(*force, path.clone(), password.clone()).await,
         Commands::ChangePassword { password } => cmd_change_password(password.clone()).await,
+        Commands::Whoami => cmd_whoami().await,
     }
 }
