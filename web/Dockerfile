@@ -14,4 +14,4 @@ RUN bun run build
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "if [ ! -f /data/local.db ]; then cp /app/local.db /data/local.db; fi && bun build/index.js"]
+CMD ["bun", "build/index.js"]

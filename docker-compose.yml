@@ -7,7 +7,14 @@ services:
       - "3000:3000"
     environment:
       - DATABASE_URL=file:/data/local.db
+      - NODE_ENV=production
+      - BETTER_AUTH_URL=http://localhost:3000
+      - VOE_AUTH_CLIENT_ID=${VOE_AUTH_CLIENT_ID}
+      - VOE_AUTH_CLIENT_SECRET=${VOE_AUTH_CLIENT_SECRET}
     volumes:
-      - ./web/local.db:/data/local.db
+      - db-data:/data
+    restart: unless-stopped
 
-volumes: {}
+volumes:
+  db-data:
+    driver: local
