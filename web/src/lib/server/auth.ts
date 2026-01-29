@@ -51,8 +51,7 @@ const deviceLogPlugin = (): BetterAuthPlugin => ({
 });
 
 export const auth = betterAuth({
-	baseURL: BETTER_AUTH_URL,
-	adapter: drizzleAdapter(db, {
+	database: drizzleAdapter(db, {
 		provider: 'pg'
 	}),
 	plugins: [

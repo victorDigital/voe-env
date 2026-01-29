@@ -8,7 +8,7 @@ export async function setEnv(
 	fullKey: string,
 	encryptedValue: string
 ): Promise<void> {
-	const now = new Date().toISOString();
+	const now = new Date();
 
 	await db
 		.insert(envVault)
@@ -21,7 +21,7 @@ export async function setEnv(
 			updatedAt: now
 		})
 		.onConflictDoUpdate({
-			target: envVault.userKeyUnique,
+			target: [envVault.userId, envVault.fullKey],
 			set: { encryptedValue, updatedAt: now }
 		});
 }
