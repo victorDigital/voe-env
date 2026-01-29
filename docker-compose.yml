@@ -2,13 +2,17 @@ version: "3.8"
 
 services:
   web:
-    build: ./web
+    build:
+      context: ./web
+      args:
+        - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-http://localhost:3000}
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=file:/data/local.db
+      - DATABASE_URL=${DATABASE_URL}
       - NODE_ENV=production
       - BETTER_AUTH_URL=http://localhost:3000
+      - PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       - VOE_AUTH_CLIENT_ID=${VOE_AUTH_CLIENT_ID}
       - VOE_AUTH_CLIENT_SECRET=${VOE_AUTH_CLIENT_SECRET}
     volumes:

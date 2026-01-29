@@ -1,23 +1,14 @@
-import { drizzle } from 'drizzle-orm/bun-sqlite';
-import * as schema from './schema';
-import { Database } from 'bun:sqlite';
-import { DATABASE_URL } from '$env/static/private';
-import { dev } from '$app/environment';
+import { drizzle } from 'drizzle-orm/postgres-js';
 
-// Parse the DATABASE_URL to get the actual file path
-function getDatabasePath(url: string): string {
-	if (url.startsWith('file:')) {
-		return url.substring(5); // Remove 'file:' prefix
-	}
-	return url;
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+	throw new Error('DATABASE_URL environment variable is required');
 }
 
-const dbPath = getDatabasePath(DATABASE_URL);
+console.log('[DB] Connecting to PostgreSQL...');
 
-console.log('[DB] Connecting to database at:', dbPath);
+// Create postgres connection
+export const db = drizzle({ connection: DATABASE_URL });
 
-// Create database connection with create flag
-export const client = new Database(dbPath, { create: true });
-export const db = drizzle(client, { schema });
-
-console.log('[DB] Database connection established');
+console.log('[DB] PostgreSQL connection established');

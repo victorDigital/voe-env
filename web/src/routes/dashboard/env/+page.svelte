@@ -1,26 +1,33 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
+	import * as Card from '$lib/components/ui/card/index.js';
+	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert/index.js';
+	import type { PageData } from './$types';
+	import DataTable from './data-table.svelte';
+	import { getColumns, type EnvItem } from './columns.js';
+	import AlertCircle from '@lucide/svelte/icons/alert-circle';
+	import Lock from '@lucide/svelte/icons/lock';
 
-	let { data, form } = $props();
+	let { data, form }: { data: PageData; form: any } = $props();
 
 	let currentPath = $derived(data.path);
-	let vaultPassword = $state('');
-	let setKey = $state('');
-	let setValue = $state('');
-	let getKey = $state('');
+    let vaultPassword = $state('');
+	let tempPassword = $state('');
 	let deleteKey = $state('');
+	let showPasswordPrompt = $state(false);
+	let unlockError = $state('');
+	let isUnlocking = $state(false);
+	let showAllValues = $state(false);
+	let pendingShowAll = $state(false);
 
-	// For displaying get result
-	let getResult = $state<string | null>(null);
-
-	// Encrypted envs from server
 	let encryptedEnvs = $derived(data.encryptedEnvs || {});
 	let decryptedEnvs = $state<Record<string, string>>({});
-
 	let breadcrumbs = $derived(currentPath ? currentPath.split(':') : []);
 
-	// Client-side encryption functions
 	async function deriveKey(password: string): Promise<CryptoKey> {
 		const keyMaterial = await crypto.subtle.importKey(
 			'raw',
@@ -70,7 +77,61 @@
 		return new TextDecoder().decode(decrypted);
 	}
 
-	// Decrypt all envs when password changes
+	async function tryUnlock() {
+		if (!tempPassword) {
+			unlockError = 'Please enter a password';
+			return;
+		}
+
+		isUnlocking = true;
+		unlockError = '';
+
+		try {
+			// Try to decrypt one value to verify password
+			const firstKey = Object.keys(encryptedEnvs)[0];
+			if (firstKey) {
+				await decrypt(encryptedEnvs[firstKey], tempPassword);
+			}
+
+			// Password is correct, save it and decrypt all
+			vaultPassword = tempPassword;
+			await decryptAllEnvs();
+			showPasswordPrompt = false;
+			tempPassword = '';
+			if (pendingShowAll) {
+				showAllValues = true;
+				pendingShowAll = false;
+			}
+		} catch (err) {
+			unlockError = 'Invalid password. Please try again.';
+			console.error('Unlock error:', err);
+		} finally {
+			isUnlocking = false;
+		}
+	}
+
+	function cancelUnlock() {
+		showPasswordPrompt = false;
+		tempPassword = '';
+		unlockError = '';
+	}
+
+	function handleRequestUnlock() {
+		showPasswordPrompt = true;
+		unlockError = '';
+	}
+
+	function handleShowAll() {
+		if (Object.keys(encryptedEnvs).length > 0 && !vaultPassword) {
+			// Need to unlock first
+			pendingShowAll = true;
+			showPasswordPrompt = true;
+			unlockError = '';
+		} else {
+			showAllValues = !showAllValues;
+		}
+	}
+
 	$effect(() => {
 		if (vaultPassword && Object.keys(encryptedEnvs).length > 0) {
 			decryptAllEnvs();
@@ -85,82 +146,14 @@
 			try {
 				newDecrypted[key] = await decrypt(enc as string, vaultPassword);
 			} catch {
-				// Skip invalid
+				// Skip items that fail to decrypt
 			}
 		}
 		decryptedEnvs = newDecrypted;
 	}
 
-	function b64ByteLength(b64: string): number {
-		let len = b64.length;
-		let padding = 0;
-		if (b64.endsWith('==')) padding = 2;
-		else if (b64.endsWith('=')) padding = 1;
-		return (len * 3) / 4 - padding;
-	}
-
-	function estimateLength(encrypted: string): number {
-		console.log('Estimating length for:', encrypted);
-		if (typeof encrypted !== 'string' || !encrypted) return 0;
-		try {
-			const combinedLength = b64ByteLength(encrypted);
-			const dataLength = combinedLength - 12;
-			const plaintextLength = dataLength - 16;
-			return Math.max(0, plaintextLength);
-		} catch {
-			return 0;
-		}
-	}
-
 	function navigateTo(path: string) {
 		goto(`?path=${encodeURIComponent(path)}`);
-	}
-
-	function goUp() {
-		const parts = currentPath.split(':');
-		parts.pop();
-		const newPath = parts.join(':');
-		navigateTo(newPath);
-	}
-
-	const setEnhance = async ({ formData, cancel }: any) => {
-		if (!vaultPassword) {
-			cancel();
-			return;
-		}
-		const value = formData.get('value') as string;
-		const encryptedValue = await encrypt(value, vaultPassword);
-		formData.set('encryptedValue', encryptedValue);
-		formData.delete('value');
-
-		return async ({ update }: any) => {
-			await update();
-		};
-	};
-
-	const getEnhance = async ({ formData, cancel }: any) => {
-		if (!vaultPassword) {
-			cancel();
-			return;
-		}
-
-		return async ({ result, update }: any) => {
-			if (result.type === 'success' && result.data?.encryptedValue) {
-				try {
-					const value = await decrypt(result.data.encryptedValue, vaultPassword);
-					getResult = value;
-				} catch {
-					getResult = 'Error decrypting value';
-				}
-			} else {
-				getResult = null;
-			}
-			await update();
-		};
-	};
-
-	function getLockedString(length: number): string {
-		return '•'.repeat(Math.min(length, 20));
 	}
 
 	function deleteItem(name: string) {
@@ -168,169 +161,105 @@
 		const form = document.getElementById('delete-form') as HTMLFormElement;
 		form.requestSubmit();
 	}
+
+	const tableData = $derived<EnvItem[]>(
+		data.items.map((item: any) => ({
+			name: item.name,
+			type: item.type,
+			value: decryptedEnvs[item.name],
+			encrypted: encryptedEnvs[item.name]
+		}))
+	);
+
+	const columns = $derived(
+		getColumns(currentPath, navigateTo, deleteItem, handleRequestUnlock, showAllValues, isUnlocking)
+	);
 </script>
 
 <svelte:head>
 	<title>Env Vault</title>
 </svelte:head>
 
-<div class="container mx-auto p-4">
-	<h1 class="mb-4 text-2xl font-bold">Env Vault</h1>
-
-	<!-- Breadcrumbs -->
-	<div class="mb-4">
-		<button
-			class="text-blue-500 hover:underline"
-			onclick={() => navigateTo('')}
-			disabled={currentPath === ''}
-		>
-			Root
-		</button>
-		{#each breadcrumbs as crumb, i}
-			<span> / </span>
-			<button
-				class="text-blue-500 hover:underline"
-				onclick={() => navigateTo(breadcrumbs.slice(0, i + 1).join(':'))}
+<div class="container mx-auto max-w-5xl p-6">
+	<div class="mb-6">
+		<h1 class="text-2xl font-semibold tracking-tight">Environment Vault</h1>
+		<div class="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+			<Button
+				variant="ghost"
+				size="sm"
+				onclick={() => navigateTo('')}
+				disabled={currentPath === ''}
 			>
-				{crumb}
-			</button>
-		{/each}
-	</div>
-
-	<!-- Current Path -->
-	<p class="mb-4">Current Path: {currentPath || 'Root'}</p>
-
-	<!-- Items List -->
-	<div class="mb-8">
-		<h2 class="mb-2 text-xl font-semibold">Contents</h2>
-		{#if data.items.length === 0}
-			<p>No items here.</p>
-		{:else}
-			<ul class="space-y-2">
-				{#each data.items as item}
-					<li class="flex items-center space-x-2">
-						{#if item.type === 'folder'}
-							<span>📁</span>
-							<button
-								class="text-blue-500 hover:underline"
-								onclick={() => navigateTo(currentPath ? `${currentPath}:${item.name}` : item.name)}
-							>
-								{item.name}
-							</button>
-						{:else}
-							<span>🔑</span>
-							<span>
-								{#if decryptedEnvs[item.name]}
-									{item.name}: {decryptedEnvs[item.name]}
-								{:else}
-									{item.name}: {getLockedString(estimateLength(encryptedEnvs[item.name]))}
-								{/if}
-							</span>
-							<!-- <span
-								>{item.name}: {decryptedEnvs[
-									currentPath ? `${currentPath}:${item.name}` : item.name
-								] || `${estimateLength(encryptedEnvs[item.name])} chars)`}</span
-							> -->
-							<button
-								class="rounded bg-red-500 px-2 py-1 text-sm text-white"
-								onclick={() => deleteItem(item.name)}
-							>
-								Delete
-							</button>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
-
-	<!-- Vault Password -->
-	<div class="mb-8">
-		<h2 class="mb-2 text-xl font-semibold">Vault Password</h2>
-		<div class="mb-2">
-			<label for="vault-password" class="block">Enter your vault password:</label>
-			<input
-				id="vault-password"
-				type="password"
-				bind:value={vaultPassword}
-				class="w-full border p-2"
-				required
-			/>
+				Root
+			</Button>
+			{#each breadcrumbs as crumb, i}
+				<span>/</span>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => navigateTo(breadcrumbs.slice(0, i + 1).join(':'))}
+				>
+					{crumb}
+				</Button>
+			{/each}
 		</div>
 	</div>
 
-	<!-- Set Env Form -->
-	<div class="mb-8">
-		<h2 class="mb-2 text-xl font-semibold">Set Environment Variable</h2>
-		<form method="POST" action="?/set" use:enhance={setEnhance}>
-			<input type="hidden" name="path" value={currentPath} />
-			<div class="mb-2">
-				<label for="set-key" class="block">Key:</label>
-				<input
-					id="set-key"
-					name="key"
-					type="text"
-					bind:value={setKey}
-					class="w-full border p-2"
-					required
-				/>
-			</div>
-			<div class="mb-2">
-				<label for="set-value" class="block">Value:</label>
-				<input
-					id="set-value"
-					name="value"
-					type="text"
-					bind:value={setValue}
-					class="w-full border p-2"
-					required
-				/>
-			</div>
+	{#if showPasswordPrompt}
+		<Card.Root class="mb-6 border-yellow-500/50 bg-yellow-500/10">
+			<Card.Header>
+				<div class="flex items-center gap-2">
+					<Lock class="h-5 w-5 text-yellow-600" />
+					<Card.Title class="text-base">Unlock Required</Card.Title>
+				</div>
+				<Card.Description>
+					Enter the vault password to view encrypted values in {currentPath || 'Root'}
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if unlockError}
+					<Alert variant="destructive">
+						<AlertCircle class="h-4 w-4" />
+						<AlertTitle>Error</AlertTitle>
+						<AlertDescription>{unlockError}</AlertDescription>
+					</Alert>
+				{/if}
+				<div class="flex gap-2">
+					<Input
+						type="password"
+						placeholder="Enter vault password..."
+						bind:value={tempPassword}
+						onkeydown={(e) => e.key === 'Enter' && tryUnlock()}
+						class="max-w-sm"
+					/>
+					<Button onclick={tryUnlock} disabled={isUnlocking}>
+						{#if isUnlocking}
+							Unlocking...
+						{:else}
+							Unlock
+						{/if}
+					</Button>
+					<Button variant="ghost" onclick={cancelUnlock}>Cancel</Button>
+				</div>
+			</Card.Content>
+		</Card.Root>
+	{/if}
 
-			<button
-				type="submit"
-				class="rounded bg-blue-500 px-4 py-2 text-white"
-				disabled={!vaultPassword}>Set</button
-			>
-		</form>
-		{#if form?.success === false && form?.action === 'set'}
-			<p class="mt-2 text-red-500">{form.error}</p>
-		{:else if form?.success === true && form?.action === 'set'}
-			<p class="mt-2 text-green-500">Set successfully!</p>
-		{/if}
+	<div class="mb-2 flex items-center justify-between">
+		<div class="text-sm text-muted-foreground">
+			{tableData.length} item{tableData.length !== 1 ? 's' : ''}
+		</div>
+		<Button
+			variant="outline"
+			size="sm"
+			onclick={handleShowAll}
+		>
+			{showAllValues ? 'Hide All' : 'Show All'}
+		</Button>
 	</div>
 
-	<!-- Get Env Form -->
-	<div class="mb-8">
-		<h2 class="mb-2 text-xl font-semibold">Get Environment Variable</h2>
-		<form method="POST" action="?/get" use:enhance={getEnhance}>
-			<div class="mb-2">
-				<label for="get-key" class="block">Full Key:</label>
-				<input
-					id="get-key"
-					name="fullKey"
-					type="text"
-					bind:value={getKey}
-					class="w-full border p-2"
-					placeholder="e.g., acme:website:dev:API_KEY"
-					required
-				/>
-			</div>
+	<DataTable data={tableData} {columns} />
 
-			<button
-				type="submit"
-				class="rounded bg-green-500 px-4 py-2 text-white"
-				disabled={!vaultPassword}>Get</button
-			>
-		</form>
-		{#if getResult !== null}
-			<p class="mt-2 text-green-500">Value: {getResult}</p>
-		{:else if form?.success === false && form?.action === 'get'}
-			<p class="mt-2 text-red-500">{form.error}</p>
-		{/if}
-	</div>
-
-	<!-- Delete Form (hidden) -->
 	<form id="delete-form" method="POST" action="?/delete" use:enhance>
 		<input type="hidden" name="fullKey" bind:value={deleteKey} />
 	</form>

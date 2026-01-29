@@ -10,21 +10,5 @@ export const load: PageServerLoad = async ({ locals }) => {
 		throw redirect(302, '/');
 	}
 
-	// Fetch authorized devices (logged approvals)
-	const devices = await db
-		.select({
-			id: deviceLog.id,
-			userCode: deviceLog.userCode,
-			clientId: deviceLog.clientId,
-			scope: deviceLog.scope,
-			approvedAt: deviceLog.approvedAt
-		})
-		.from(deviceLog)
-		.where(eq(deviceLog.userId, locals.user.id));
-
-	return {
-		session: locals.session || null,
-		user: locals.user || null,
-		devices
-	};
+	return redirect(302, '/dashboard/env');
 };

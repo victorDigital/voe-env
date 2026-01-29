@@ -1,29 +1,29 @@
-import { sqliteTable, text, integer, unique } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, integer, boolean, timestamp, unique } from 'drizzle-orm/pg-core';
 
-export const user = sqliteTable('user', {
+export const user = pgTable('user', {
 	id: text('id').primaryKey(),
 	name: text('name').notNull(),
 	email: text('email').notNull(),
-	emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull(),
+	emailVerified: boolean('emailVerified').notNull(),
 	image: text('image'),
-	createdAt: text('createdAt').notNull(),
-	updatedAt: text('updatedAt').notNull()
+	createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+	updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 });
 
-export const session = sqliteTable('session', {
+export const session = pgTable('session', {
 	id: text('id').primaryKey(),
 	userId: text('userId')
 		.notNull()
 		.references(() => user.id),
 	token: text('token').notNull(),
-	expiresAt: text('expiresAt').notNull(),
+	expiresAt: timestamp('expiresAt', { mode: 'string' }).notNull(),
 	ipAddress: text('ipAddress'),
 	userAgent: text('userAgent'),
-	createdAt: text('createdAt').notNull(),
-	updatedAt: text('updatedAt').notNull()
+	createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+	updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 });
 
-export const account = sqliteTable('account', {
+export const account = pgTable('account', {
 	id: text('id').primaryKey(),
 	userId: text('userId')
 		.notNull()
@@ -32,25 +32,25 @@ export const account = sqliteTable('account', {
 	providerId: text('providerId').notNull(),
 	accessToken: text('accessToken'),
 	refreshToken: text('refreshToken'),
-	accessTokenExpiresAt: text('accessTokenExpiresAt'),
-	refreshTokenExpiresAt: text('refreshTokenExpiresAt'),
+	accessTokenExpiresAt: timestamp('accessTokenExpiresAt', { mode: 'string' }),
+	refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt', { mode: 'string' }),
 	scope: text('scope'),
 	idToken: text('idToken'),
 	password: text('password'),
-	createdAt: text('createdAt').notNull(),
-	updatedAt: text('updatedAt').notNull()
+	createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+	updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 });
 
-export const verification = sqliteTable('verification', {
+export const verification = pgTable('verification', {
 	id: text('id').primaryKey(),
 	identifier: text('identifier').notNull(),
 	value: text('value').notNull(),
-	expiresAt: text('expiresAt').notNull(),
-	createdAt: text('createdAt').notNull(),
-	updatedAt: text('updatedAt').notNull()
+	expiresAt: timestamp('expiresAt', { mode: 'string' }).notNull(),
+	createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+	updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 });
 
-export const envVault = sqliteTable(
+export const envVault = pgTable(
 	'env_vault',
 	{
 		id: text('id').primaryKey(),
@@ -59,15 +59,15 @@ export const envVault = sqliteTable(
 			.references(() => user.id),
 		fullKey: text('fullKey').notNull(),
 		encryptedValue: text('encryptedValue').notNull(),
-		createdAt: text('createdAt').notNull(),
-		updatedAt: text('updatedAt').notNull()
+		createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+		updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 	},
 	(table) => ({
-		userKeyUnique: unique().on(table.userId, table.fullKey)
+		userKeyUnique: unique('env_vault_userId_fullKey_unique').on(table.userId, table.fullKey)
 	})
 );
 
-export const deviceCode = sqliteTable('deviceCode', {
+export const deviceCode = pgTable('deviceCode', {
 	id: text('id').primaryKey(),
 	deviceCode: text('deviceCode').notNull(),
 	userCode: text('userCode').notNull(),
@@ -75,14 +75,14 @@ export const deviceCode = sqliteTable('deviceCode', {
 	clientId: text('clientId'),
 	scope: text('scope'),
 	status: text('status').notNull(),
-	expiresAt: text('expiresAt').notNull(),
-	lastPolledAt: text('lastPolledAt'),
+	expiresAt: timestamp('expiresAt', { mode: 'string' }).notNull(),
+	lastPolledAt: timestamp('lastPolledAt', { mode: 'string' }),
 	pollingInterval: integer('pollingInterval'),
-	createdAt: text('createdAt').notNull(),
-	updatedAt: text('updatedAt').notNull()
+	createdAt: timestamp('createdAt', { mode: 'string' }).notNull(),
+	updatedAt: timestamp('updatedAt', { mode: 'string' }).notNull()
 });
 
-export const deviceLog = sqliteTable('deviceLog', {
+export const deviceLog = pgTable('deviceLog', {
 	id: text('id').primaryKey(),
 	userId: text('userId')
 		.notNull()
@@ -90,5 +90,5 @@ export const deviceLog = sqliteTable('deviceLog', {
 	clientId: text('clientId').notNull(),
 	userCode: text('userCode').notNull(),
 	scope: text('scope'),
-	approvedAt: text('approvedAt').notNull()
+	approvedAt: timestamp('approvedAt', { mode: 'string' }).notNull()
 });

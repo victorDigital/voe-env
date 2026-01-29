@@ -1,4 +1,3 @@
-import { BETTER_AUTH_URL, VOE_AUTH_CLIENT_ID, VOE_AUTH_CLIENT_SECRET } from '$env/static/private';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from './db';
@@ -9,6 +8,11 @@ import { createAuthMiddleware } from 'better-auth/plugins';
 import { deviceLog, deviceCode } from './db/schema';
 import { eq } from 'drizzle-orm';
 import type { BetterAuthPlugin } from 'better-auth';
+
+// Use process.env for runtime environment variable access
+const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL || 'http://localhost:5173';
+const VOE_AUTH_CLIENT_ID = process.env.VOE_AUTH_CLIENT_ID || '';
+const VOE_AUTH_CLIENT_SECRET = process.env.VOE_AUTH_CLIENT_SECRET || '';
 
 const deviceLogPlugin = (): BetterAuthPlugin => ({
 	id: 'device-log',
@@ -49,7 +53,7 @@ const deviceLogPlugin = (): BetterAuthPlugin => ({
 export const auth = betterAuth({
 	baseURL: BETTER_AUTH_URL,
 	adapter: drizzleAdapter(db, {
-		provider: 'sqlite'
+		provider: 'pg'
 	}),
 	plugins: [
 		genericOAuth({

@@ -21,7 +21,7 @@ export async function setEnv(
 			updatedAt: now
 		})
 		.onConflictDoUpdate({
-			target: [envVault.userId, envVault.fullKey],
+			target: envVault.userKeyUnique,
 			set: { encryptedValue, updatedAt: now }
 		});
 }
