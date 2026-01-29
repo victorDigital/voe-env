@@ -51,6 +51,7 @@ export const auth = betterAuth({
 		provider: 'pg'
 	}),
 	baseUrl: BETTER_AUTH_URL,
+	trustedOrigins: ['http://localhost:5173', 'https://env.voe.dk'],
 	plugins: [
 		genericOAuth({
 			config: [
