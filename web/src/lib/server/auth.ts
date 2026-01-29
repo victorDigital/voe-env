@@ -54,6 +54,7 @@ export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: 'pg'
 	}),
+	baseUrl: BETTER_AUTH_URL,
 	plugins: [
 		genericOAuth({
 			config: [
