@@ -71,6 +71,8 @@ enum Commands {
     },
     /// Display current user info
     Whoami,
+    /// List all vault folders and keys in a tree view
+    List,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -178,6 +180,22 @@ struct DeleteResponse {
     #[serde(rename = "errorCount")]
     error_count: Option<u32>,
     errors: Option<Vec<String>>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TreeEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    name: String,
+    children: Option<Vec<TreeEntry>>,
+}
+
+#[derive(Deserialize)]
+struct ListResponse {
+    success: bool,
+    tree: Option<Vec<TreeEntry>>,
+    count: Option<u32>,
     error: Option<String>,
 }
 
@@ -969,6 +987,57 @@ async fn cmd_whoami() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn print_tree(entries: &[TreeEntry], prefix: &str, is_last_stack: &[bool]) {
+    for (i, entry) in entries.iter().enumerate() {
+        let is_last = i == entries.len() - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let icon = if entry.entry_type == "folder" { "📁" } else { "🔑" };
+        let full_prefix = if is_last_stack.is_empty() {
+            format!("{}{}", prefix, connector)
+        } else {
+            let parent_prefix: String = is_last_stack
+                .iter()
+                .map(|&last| if last { "    " } else { "│   " })
+                .collect();
+            format!("{}{}{}", parent_prefix, prefix, connector)
+        };
+        println!("{}{} {}", full_prefix, icon, entry.name);
+        if let Some(children) = &entry.children {
+            let mut new_stack = is_last_stack.to_vec();
+            new_stack.push(is_last);
+            print_tree(children, "", &new_stack);
+        }
+    }
+}
+
+async fn cmd_list() -> Result<(), Box<dyn std::error::Error>> {
+    let base_url = get_base_url();
+    let response: ListResponse = make_authenticated_request(
+        reqwest::Method::GET,
+        &format!("{}/api/vault/list", base_url),
+        None::<&()>,
+    )
+    .await?;
+
+    if let Some(error) = response.error {
+        return Err(format!("List failed: {}", error).into());
+    }
+
+    if let Some(tree) = response.tree {
+        if tree.is_empty() {
+            println!("📂 No vaults found.");
+        } else {
+            let count = response.count.unwrap_or(0);
+            println!("📂 Vault Structure ({} total keys):", count);
+            println!();
+            print_tree(&tree, "", &[]);
+        }
+    } else {
+        println!("📂 No vaults found.");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -988,5 +1057,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => cmd_pull(*force, path.clone(), password.clone()).await,
         Commands::ChangePassword { password } => cmd_change_password(password.clone()).await,
         Commands::Whoami => cmd_whoami().await,
+        Commands::List => cmd_list().await,
     }
 }
