@@ -80,6 +80,8 @@ enum Commands {
         /// Search pattern (supports partial matching)
         pattern: String,
     },
+    /// Validate .env file for common issues
+    Validate,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1186,6 +1188,162 @@ async fn cmd_search(pattern: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn cmd_validate() -> Result<(), Box<dyn std::error::Error>> {
+    let env_path = get_env_path();
+    
+    if !env_path.exists() {
+        return Err(".env file not found. Run 've init' first.".into());
+    }
+
+    println!("🔍 Validating .env file...");
+    println!();
+
+    let content = fs::read_to_string(&env_path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    
+    let mut issues: Vec<(usize, String, String)> = Vec::new();
+    let mut seen_keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut has_ve_vault = false;
+    let mut key_count = 0;
+
+    for (idx, line) in lines.iter().enumerate() {
+        let line_num = idx + 1;
+        let trimmed = line.trim();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Check for VE_VAULT_KEYPASS
+        if trimmed.starts_with("VE_VAULT_KEYPASS=") {
+            has_ve_vault = true;
+            continue;
+        }
+
+        // Check if line looks like a key=value pair
+        if let Some(equal_pos) = trimmed.find('=') {
+            let key = &trimmed[..equal_pos].trim();
+            let value = &trimmed[equal_pos + 1..].trim();
+
+            // Validate key
+            if key.is_empty() {
+                issues.push((line_num, "❌".to_string(), "Empty key name".to_string()));
+                continue;
+            }
+
+            // Check for spaces in key
+            if key.contains(' ') {
+                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' contains spaces", key)));
+            }
+
+            // Check for invalid characters in key
+            let valid_key_regex = regex::Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
+            if !valid_key_regex.is_match(key) {
+                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' has invalid characters", key)));
+            }
+
+            // Check for duplicates
+            if let Some(&first_line) = seen_keys.get(*key) {
+                issues.push((line_num, "❌".to_string(), format!("Duplicate key '{}' (first defined on line {})", key, first_line)));
+            } else {
+                seen_keys.insert(key.to_string(), line_num);
+                key_count += 1;
+            }
+
+            // Check for empty value
+            if value.is_empty() {
+                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' has empty value", key)));
+            }
+
+            // Check for unclosed quotes
+            if (value.starts_with('"') && !value.ends_with('"')) ||
+               (value.starts_with('\'') && !value.ends_with('\'')) {
+                issues.push((line_num, "❌".to_string(), format!("Key '{}' has unclosed quotes", key)));
+            }
+
+            // Check for spaces around equals (styling issue)
+            if line.contains(" =") || line.contains("= ") {
+                if !line.trim().starts_with('#') {
+                    // Only flag if it's not part of the value
+                    let before_eq = &line[..line.find('=').unwrap_or(0)];
+                    let after_eq = &line[line.find('=').unwrap_or(0) + 1..];
+                    if before_eq.ends_with(' ') || after_eq.starts_with(' ') {
+                        issues.push((line_num, "💡".to_string(), format!("Key '{}' has spaces around '=' (styling)", key)));
+                    }
+                }
+            }
+        } else {
+            // Line doesn't contain '=' - might be an issue
+            if !trimmed.starts_with('#') && !trimmed.is_empty() {
+                issues.push((line_num, "⚠️".to_string(), format!("Line doesn't look like a key=value pair: {}", trimmed)));
+            }
+        }
+    }
+
+    // Summary
+    println!("📊 Summary:");
+    println!("   Total lines: {}", lines.len());
+    println!("   Environment variables: {}", key_count);
+    println!("   VOE configured: {}", if has_ve_vault { "✅ Yes" } else { "❌ No" });
+    println!();
+
+    if issues.is_empty() {
+        println!("✅ No issues found! Your .env file looks good.");
+    } else {
+        println!("⚠️  Found {} issue(s):", issues.len());
+        println!();
+        
+        // Group by severity
+        let mut errors: Vec<&(usize, String, String)> = Vec::new();
+        let mut warnings: Vec<&(usize, String, String)> = Vec::new();
+        let mut tips: Vec<&(usize, String, String)> = Vec::new();
+        
+        for issue in &issues {
+            match issue.1.as_str() {
+                "❌" => errors.push(issue),
+                "⚠️" => warnings.push(issue),
+                "💡" => tips.push(issue),
+                _ => {}
+            }
+        }
+
+        if !errors.is_empty() {
+            println!("Errors (should fix):");
+            for (line, icon, msg) in &errors {
+                println!("   Line {:3} {} {}", line, icon, msg);
+            }
+            println!();
+        }
+
+        if !warnings.is_empty() {
+            println!("Warnings (consider fixing):");
+            for (line, icon, msg) in &warnings {
+                println!("   Line {:3} {} {}", line, icon, msg);
+            }
+            println!();
+        }
+
+        if !tips.is_empty() {
+            println!("Tips (optional improvements):");
+            for (line, icon, msg) in &tips {
+                println!("   Line {:3} {} {}", line, icon, msg);
+            }
+            println!();
+        }
+
+        let error_count = errors.len();
+        if error_count > 0 {
+            println!("❌ Validation failed with {} error(s)", error_count);
+            std::process::exit(1);
+        } else {
+            println!("⚠️  Validation passed with warnings");
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -1208,5 +1366,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::List => cmd_list().await,
         Commands::Diff => cmd_diff().await,
         Commands::Search { pattern } => cmd_search(pattern.clone()).await,
+        Commands::Validate => cmd_validate(),
     }
 }
