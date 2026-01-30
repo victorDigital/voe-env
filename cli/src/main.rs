@@ -73,6 +73,13 @@ enum Commands {
     Whoami,
     /// List all vault folders and keys in a tree view
     List,
+    /// Compare local .env with server version
+    Diff,
+    /// Search for keys across all vaults by pattern
+    Search {
+        /// Search pattern (supports partial matching)
+        pattern: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1038,6 +1045,147 @@ async fn cmd_list() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn cmd_diff() -> Result<(), Box<dyn std::error::Error>> {
+    let env_path = get_env_path();
+    if !env_path.exists() {
+        return Err(".env file not found. Run 've init' first.".into());
+    }
+
+    let (vault_path, vault_password) = parse_env_file(&env_path)?;
+    let local_vars_vec = parse_env_vars(&env_path)?;
+    let local_vars: HashMap<String, String> = local_vars_vec.into_iter().collect();
+
+    println!("🔍 Comparing local .env with server vault: {}", vault_path);
+
+    let base_url = get_base_url();
+    let response: PullResponse = make_authenticated_request(
+        reqwest::Method::GET,
+        &format!("{}/api/vault/pull?vaultPath={}", base_url, vault_path),
+        None::<&PullRequest>,
+    )
+    .await?;
+
+    if let Some(encrypted_envs) = response.envs {
+        let server_vars = decrypt_env_vars(&encrypted_envs, &vault_password)?;
+
+        let local_keys: std::collections::HashSet<_> = local_vars.keys().cloned().collect();
+        let server_keys: std::collections::HashSet<_> = server_vars.keys().cloned().collect();
+
+        let local_only: Vec<_> = local_keys.difference(&server_keys).collect();
+        let server_only: Vec<_> = server_keys.difference(&local_keys).collect();
+        let common_keys: Vec<_> = local_keys.intersection(&server_keys).collect();
+
+        let mut differing: Vec<&str> = Vec::new();
+        for key in &common_keys {
+            if local_vars.get(*key) != server_vars.get(*key) {
+                differing.push(*key);
+            }
+        }
+
+        let has_differences = !local_only.is_empty() || !server_only.is_empty() || !differing.is_empty();
+
+        if !has_differences {
+            println!("✅ Local and server are in sync!");
+            println!("   {} variable(s) match", local_vars.len());
+        } else {
+            println!();
+
+            if !local_only.is_empty() {
+                println!("📥 Local only ({}):", local_only.len());
+                for key in &local_only {
+                    println!("   + {}", key);
+                }
+                println!();
+            }
+
+            if !server_only.is_empty() {
+                println!("📤 Server only ({}):", server_only.len());
+                for key in &server_only {
+                    println!("   - {}", key);
+                }
+                println!();
+            }
+
+            if !differing.is_empty() {
+                println!("⚠️  Different values ({}):", differing.len());
+                for key in &differing {
+                    println!("   ~ {}", key);
+                }
+                println!();
+            }
+
+            println!("💡 Run 've push' to upload local changes");
+            println!("   Run 've pull' to download server changes");
+        }
+
+        Ok(())
+    } else {
+        Err("No environment variables found on server".into())
+    }
+}
+
+async fn cmd_search(pattern: String) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Searching for keys matching: {}", pattern);
+
+    let base_url = get_base_url();
+    let response: ListResponse = make_authenticated_request(
+        reqwest::Method::GET,
+        &format!("{}/api/vault/list", base_url),
+        None::<&()>,
+    )
+    .await?;
+
+    if let Some(error) = response.error {
+        return Err(format!("Search failed: {}", error).into());
+    }
+
+    if let Some(tree) = response.tree {
+        let pattern_lower = pattern.to_lowercase();
+        let mut matches: Vec<(String, String)> = Vec::new();
+
+        fn search_tree(
+            entries: &[TreeEntry],
+            current_path: &str,
+            pattern: &str,
+            matches: &mut Vec<(String, String)>,
+        ) {
+            for entry in entries {
+                let full_path = if current_path.is_empty() {
+                    entry.name.clone()
+                } else {
+                    format!("{}:{}", current_path, entry.name)
+                };
+
+                if entry.name.to_lowercase().contains(pattern) {
+                    matches.push((full_path.clone(), entry.entry_type.clone()));
+                }
+
+                if let Some(children) = &entry.children {
+                    search_tree(children, &full_path, pattern, matches);
+                }
+            }
+        }
+
+        search_tree(&tree, "", &pattern_lower, &mut matches);
+
+        if matches.is_empty() {
+            println!("❌ No matches found for '{}'", pattern);
+        } else {
+            println!("✅ Found {} match(es):", matches.len());
+            println!();
+
+            for (path, entry_type) in matches {
+                let icon = if entry_type == "folder" { "📁" } else { "🔑" };
+                println!("   {} {}", icon, path);
+            }
+        }
+    } else {
+        println!("📂 No vaults found.");
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -1058,5 +1206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::ChangePassword { password } => cmd_change_password(password.clone()).await,
         Commands::Whoami => cmd_whoami().await,
         Commands::List => cmd_list().await,
+        Commands::Diff => cmd_diff().await,
+        Commands::Search { pattern } => cmd_search(pattern.clone()).await,
     }
 }
