@@ -11,10 +11,15 @@
 	import { getColumns, type EnvItem } from './columns.js';
 	import AlertCircle from '@lucide/svelte/icons/alert-circle';
 	import Lock from '@lucide/svelte/icons/lock';
+	import Users from '@lucide/svelte/icons/users';
+	import Share2 from '@lucide/svelte/icons/share-2';
+	import Badge from '$lib/components/ui/badge/badge.svelte';
+	import ShareDialog from './ShareDialog.svelte';
 
 	let { data, form }: { data: PageData; form: any } = $props();
 
 	let currentPath = $derived(data.path);
+	let shareInfo = $derived(data.shareInfo || { isShared: false });
     let vaultPassword = $state('');
 	let tempPassword = $state('');
 	let deleteKey = $state('');
@@ -23,10 +28,18 @@
 	let isUnlocking = $state(false);
 	let showAllValues = $state(false);
 	let pendingShowAll = $state(false);
+	let showShareDialog = $state(false);
 
 	let encryptedEnvs = $derived(data.encryptedEnvs || {});
 	let decryptedEnvs = $state<Record<string, string>>({});
 	let breadcrumbs = $derived(currentPath ? currentPath.split(':') : []);
+
+	// Auto-unlock shared folders if vault password is provided
+	$effect(() => {
+		if (shareInfo.isShared && shareInfo.vaultPassword && !vaultPassword) {
+			vaultPassword = shareInfo.vaultPassword;
+		}
+	});
 
 	async function deriveKey(password: string): Promise<CryptoKey> {
 		const keyMaterial = await crypto.subtle.importKey(
@@ -167,7 +180,10 @@
 			name: item.name,
 			type: item.type,
 			value: decryptedEnvs[item.name],
-			encrypted: encryptedEnvs[item.name]
+			encrypted: encryptedEnvs[item.name],
+			isShared: item.isShared,
+			sharedBy: item.sharedBy,
+			permission: item.permission
 		}))
 	);
 
@@ -182,7 +198,28 @@
 
 <div class="container mx-auto max-w-5xl p-6">
 	<div class="mb-6">
-		<h1 class="text-2xl font-semibold tracking-tight">Environment Vault</h1>
+		<div class="flex items-start justify-between">
+			<div>
+				<h1 class="text-2xl font-semibold tracking-tight">Environment Vault</h1>
+				{#if shareInfo.isShared}
+					<div class="mt-2 flex items-center gap-2">
+						<Badge variant="secondary" class="flex items-center gap-1">
+							<Users class="h-3 w-3" />
+							Shared by {shareInfo.sharedBy?.name || shareInfo.sharedBy?.email}
+						</Badge>
+						<Badge variant={shareInfo.permission === 'readwrite' ? 'default' : 'outline'}>
+							{shareInfo.permission === 'readwrite' ? 'Read & Write' : 'Read Only'}
+						</Badge>
+					</div>
+				{/if}
+			</div>
+			{#if currentPath && !shareInfo.isShared}
+				<Button variant="outline" size="sm" onclick={() => (showShareDialog = true)} class="flex items-center gap-2">
+					<Share2 class="h-4 w-4" />
+					Share
+				</Button>
+			{/if}
+		</div>
 		<div class="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
 			<Button
 				variant="ghost"
@@ -263,4 +300,6 @@
 	<form id="delete-form" method="POST" action="?/delete" use:enhance>
 		<input type="hidden" name="fullKey" bind:value={deleteKey} />
 	</form>
+
+	<ShareDialog bind:open={showShareDialog} folderPath={currentPath} vaultPassword={vaultPassword} />
 </div>

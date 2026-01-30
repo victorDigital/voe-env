@@ -7,8 +7,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import * as schema from '$lib/server/db/schema';
-
-const DATABASE_URL = process.env.DATABASE_URL;
+import { DATABASE_URL } from '$env/static/private';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = await auth.api.getSession({

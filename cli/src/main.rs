@@ -82,6 +82,32 @@ enum Commands {
     },
     /// Validate .env file for common issues
     Validate,
+    /// Share a folder with another user
+    Share {
+        /// Folder path to share (e.g., org:product:dev)
+        folder_path: String,
+        /// Email of the user to share with
+        recipient_email: String,
+        /// Permission level (read or readwrite)
+        #[arg(default_value = "read")]
+        permission: String,
+    },
+    /// List your shares (incoming or outgoing)
+    Shares {
+        /// Show incoming shares (shared with you)
+        #[arg(long)]
+        incoming: bool,
+        /// Show outgoing shares (shared by you)
+        #[arg(long)]
+        outgoing: bool,
+    },
+    /// Revoke a share
+    Unshare {
+        /// Folder path to unshare
+        folder_path: String,
+        /// Email of the user to revoke access from
+        recipient_email: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -205,6 +231,41 @@ struct ListResponse {
     success: bool,
     tree: Option<Vec<TreeEntry>>,
     count: Option<u32>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ShareResponse {
+    success: bool,
+    message: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ShareInfo {
+    id: String,
+    folder_path: String,
+    permission: String,
+    #[serde(rename = "sharedBy")]
+    shared_by: Option<ShareUser>,
+    #[serde(rename = "sharedWith")]
+    shared_with: Option<ShareUser>,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "expiresAt")]
+    expires_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ShareUser {
+    email: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SharesResponse {
+    success: bool,
+    shares: Option<Vec<ShareInfo>>,
     error: Option<String>,
 }
 
@@ -1344,6 +1405,148 @@ fn cmd_validate() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn cmd_share(folder_path: String, recipient_email: String, permission: String) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📤 Sharing folder '{}' with '{}' as '{}'", folder_path, recipient_email, permission);
+
+    // Validate permission
+    if permission != "read" && permission != "readwrite" {
+        return Err("Permission must be 'read' or 'readwrite'".into());
+    }
+
+    // Get vault password - we need it to share
+    let vault_password = rpassword::read_password()?;
+    if vault_password.is_empty() {
+        return Err("Vault password is required to share a folder".into());
+    }
+
+    let base_url = get_base_url();
+    let request = serde_json::json!({
+        "folderPath": folder_path,
+        "recipientEmail": recipient_email,
+        "permission": permission,
+        "vaultPassword": vault_password
+    });
+
+    let response: ShareResponse = make_authenticated_request(
+        reqwest::Method::POST,
+        &format!("{}/api/shares", base_url),
+        Some(&request),
+    )
+    .await?;
+
+    if let Some(error) = response.error {
+        return Err(format!("Share failed: {}", error).into());
+    }
+
+    if response.success {
+        println!("✅ {}", response.message.unwrap_or_else(|| "Folder shared successfully".to_string()));
+    }
+
+    Ok(())
+}
+
+async fn cmd_shares(incoming: bool, outgoing: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let base_url = get_base_url();
+
+    // If neither flag is set, show both
+    let show_incoming = incoming || (!incoming && !outgoing);
+    let show_outgoing = outgoing || (!incoming && !outgoing);
+
+    if show_incoming {
+        println!("📥 Incoming Shares (shared with you):");
+        let response: SharesResponse = make_authenticated_request(
+            reqwest::Method::GET,
+            &format!("{}/api/shares/incoming", base_url),
+            None::<&()>,
+        )
+        .await?;
+
+        if let Some(error) = response.error {
+            println!("   Error: {}", error);
+        } else if let Some(shares) = response.shares {
+            if shares.is_empty() {
+                println!("   No incoming shares");
+            } else {
+                for share in shares {
+                    let permission_icon = if share.permission == "readwrite" { "✏️" } else { "👁️" };
+                    println!("   {} 📁 {} (from {})", permission_icon, share.folder_path, share.shared_by.as_ref().map(|u| &u.email).unwrap_or(&"unknown".to_string()));
+                }
+            }
+        }
+        println!();
+    }
+
+    if show_outgoing {
+        println!("📤 Outgoing Shares (shared by you):");
+        let response: SharesResponse = make_authenticated_request(
+            reqwest::Method::GET,
+            &format!("{}/api/shares/outgoing", base_url),
+            None::<&()>,
+        )
+        .await?;
+
+        if let Some(error) = response.error {
+            println!("   Error: {}", error);
+        } else if let Some(shares) = response.shares {
+            if shares.is_empty() {
+                println!("   No outgoing shares");
+            } else {
+                for share in shares {
+                    let permission_icon = if share.permission == "readwrite" { "✏️" } else { "👁️" };
+                    println!("   {} 📁 {} → {} [{}]", permission_icon, share.folder_path, share.shared_with.as_ref().map(|u| &u.email).unwrap_or(&"unknown".to_string()), share.id);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_unshare(folder_path: String, recipient_email: String) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚫 Revoking share of '{}' from '{}'", folder_path, recipient_email);
+
+    // First, we need to get the list of outgoing shares to find the share ID
+    let base_url = get_base_url();
+    let response: SharesResponse = make_authenticated_request(
+        reqwest::Method::GET,
+        &format!("{}/api/shares/outgoing", base_url),
+        None::<&()>,
+    )
+    .await?;
+
+    if let Some(error) = response.error {
+        return Err(format!("Failed to get shares: {}", error).into());
+    }
+
+    let shares = response.shares.ok_or("No shares found")?;
+    
+    // Find the share that matches folder_path and recipient_email
+    let matching_share = shares.iter().find(|share| {
+        share.folder_path == folder_path && 
+        share.shared_with.as_ref().map(|u| u.email == recipient_email).unwrap_or(false)
+    });
+
+    let share_id = matching_share.ok_or("Share not found. Use 've shares --outgoing' to see your shares.")?.id.clone();
+
+    // Delete the share
+    let delete_response: ShareResponse = make_authenticated_request(
+        reqwest::Method::DELETE,
+        &format!("{}/api/shares/{}", base_url, share_id),
+        None::<&()>,
+    )
+    .await?;
+
+    if let Some(error) = delete_response.error {
+        return Err(format!("Unshare failed: {}", error).into());
+    }
+
+    if delete_response.success {
+        println!("✅ {}", delete_response.message.unwrap_or_else(|| "Share revoked successfully".to_string()));
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -1367,5 +1570,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Diff => cmd_diff().await,
         Commands::Search { pattern } => cmd_search(pattern.clone()).await,
         Commands::Validate => cmd_validate(),
+        Commands::Share { folder_path, recipient_email, permission } => {
+            cmd_share(folder_path.clone(), recipient_email.clone(), permission.clone()).await
+        }
+        Commands::Shares { incoming, outgoing } => cmd_shares(*incoming, *outgoing).await,
+        Commands::Unshare { folder_path, recipient_email } => {
+            cmd_unshare(folder_path.clone(), recipient_email.clone()).await
+        }
     }
 }

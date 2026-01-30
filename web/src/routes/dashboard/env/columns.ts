@@ -10,6 +10,9 @@ export type EnvItem = {
 	type: 'folder' | 'key';
 	value?: string;
 	encrypted?: string;
+	isShared?: boolean;
+	sharedBy?: { email: string; name: string };
+	permission?: 'read' | 'readwrite';
 };
 
 export function getColumns(
@@ -33,7 +36,10 @@ export function getColumns(
 				if (item.type === 'folder') {
 					return renderComponent(DataTableFolderButton, {
 						name: item.name,
-						onNavigate: () => onNavigate(currentPath ? `${currentPath}:${item.name}` : item.name)
+						onNavigate: () => onNavigate(currentPath ? `${currentPath}:${item.name}` : item.name),
+						isShared: item.isShared,
+						sharedBy: item.sharedBy,
+						permission: item.permission
 					});
 				}
 				return renderComponent(DataTableKeyCell, {

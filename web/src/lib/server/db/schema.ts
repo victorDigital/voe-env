@@ -130,3 +130,26 @@ export const deviceLog = pgTable('deviceLog', {
 	scope: text('scope'),
 	approvedAt: timestamp('approvedAt').notNull()
 });
+
+export const folderShares = pgTable(
+	'folder_shares',
+	{
+		id: text('id').primaryKey(),
+		ownerId: text('ownerId')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		sharedWithId: text('sharedWithId')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		folderPath: text('folderPath').notNull(),
+		permission: text('permission').notNull().$type<'read' | 'readwrite'>(),
+		vaultPassword: text('vaultPassword').notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		expiresAt: timestamp('expiresAt')
+	},
+	(table) => [
+		index('folder_shares_ownerId_idx').on(table.ownerId),
+		index('folder_shares_sharedWithId_idx').on(table.sharedWithId),
+		unique('folder_shares_unique').on(table.ownerId, table.sharedWithId, table.folderPath)
+	]
+);

@@ -97,3 +97,53 @@ export async function getVaultEnv(
 export async function deleteEnv(userId: string, fullKey: string): Promise<void> {
 	await db.delete(envVault).where(and(eq(envVault.userId, userId), eq(envVault.fullKey, fullKey)));
 }
+
+// Shared vault functions
+export async function getSharedVaultEnv(
+	ownerId: string,
+	vaultPath: string
+): Promise<Record<string, string>> {
+	const searchPrefix = vaultPath ? `${vaultPath}:` : '';
+	const results = await db
+		.select({ fullKey: envVault.fullKey, encryptedValue: envVault.encryptedValue })
+		.from(envVault)
+		.where(and(eq(envVault.userId, ownerId), like(envVault.fullKey, `${searchPrefix}%`)));
+
+	const envs: Record<string, string> = {};
+	for (const { fullKey, encryptedValue } of results) {
+		// Extract the key part after the vault path prefix
+		const key = vaultPath ? fullKey.slice(searchPrefix.length) : fullKey;
+		// Only include direct children (no nested paths)
+		if (!key.includes(':')) {
+			envs[key] = encryptedValue;
+		}
+	}
+	return envs;
+}
+
+export async function setSharedEnv(
+	ownerId: string,
+	fullKey: string,
+	encryptedValue: string
+): Promise<void> {
+	const now = new Date();
+
+	await db
+		.insert(envVault)
+		.values({
+			id: randomUUID(),
+			userId: ownerId,
+			fullKey,
+			encryptedValue,
+			createdAt: now,
+			updatedAt: now
+		})
+		.onConflictDoUpdate({
+			target: [envVault.userId, envVault.fullKey],
+			set: { encryptedValue, updatedAt: now }
+		});
+}
+
+export async function deleteSharedEnv(ownerId: string, fullKey: string): Promise<void> {
+	await db.delete(envVault).where(and(eq(envVault.userId, ownerId), eq(envVault.fullKey, fullKey)));
+}
