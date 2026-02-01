@@ -73,15 +73,29 @@ export const load = async ({ locals, url }: any) => {
 
 	// Add shared folders to items list
 	// Find shares that should appear at the current path level
+	// This includes:
+	// 1. Direct children of current path (share parent === path)
+	// 2. Shares that START WITH current path (intermediate navigation)
 	const sharesAtThisLevel = allShares.filter((share) => {
 		const shareParts = share.folderPath.split(':');
+		const pathParts = path ? path.split(':') : [];
+		
 		if (path === '') {
-			// At root level, show shares whose first segment doesn't exist in own items
+			// At root level, show shares whose first segment should appear
 			return shareParts.length >= 1;
 		} else {
-			// At a specific path, show shares that are direct children
+			// At a specific path, show shares that:
+			// 1. Are direct children (parent === path)
+			// 2. Have paths that start with current path (intermediate navigation)
 			const shareParent = shareParts.slice(0, -1).join(':');
-			return shareParent === path;
+			if (shareParent === path) {
+				return true; // Direct child
+			}
+			// Check if share path starts with current path (we're navigating towards the share)
+			if (share.folderPath.startsWith(path + ':')) {
+				return true; // Intermediate path towards share
+			}
+			return false;
 		}
 	});
 
@@ -112,7 +126,7 @@ export const load = async ({ locals, url }: any) => {
 				});
 			}
 		} else {
-			// Add new shared folder
+			// Add new shared folder (could be intermediate path or actual shared folder)
 			itemsMap.set(folderName, {
 				name: folderName,
 				type: 'folder' as const,
