@@ -34,12 +34,26 @@ export const POST: RequestHandler = async ({ request }) => {
 		let targetUserId = userId;
 		let isSharedWrite = false;
 
+		// If user doesn't have their own data, check if it's a shared folder
 		if (!hasOwnData) {
 			// Check if user has shared access with write permission
 			const shareAccess = await hasShareAccess(userId, vaultPath, 'readwrite');
 
-			if (!shareAccess.hasAccess) {
-				// Check if they have read-only access
+			if (shareAccess.hasAccess) {
+				// Has write access to a shared folder - get the owner ID
+				const { getIncomingShares } = await import('$lib/server/shares');
+				const shares = await getIncomingShares(userId);
+				const matchingShare = shares.find(
+					(share) =>
+						share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
+				);
+
+				if (matchingShare) {
+					targetUserId = matchingShare.ownerId;
+					isSharedWrite = true;
+				}
+			} else {
+				// Check if they have read-only shared access
 				const readAccess = await hasShareAccess(userId, vaultPath, 'read');
 				if (readAccess.hasAccess) {
 					return json(
@@ -50,26 +64,9 @@ export const POST: RequestHandler = async ({ request }) => {
 						{ status: 403 }
 					);
 				}
-				return json(
-					{ error: 'You do not have access to modify this vault path' },
-					{ status: 403 }
-				);
+				// No shared access - user is creating their own new vault (this is allowed!)
+				// targetUserId stays as userId
 			}
-
-			// Has write access - get the owner ID
-			const { getIncomingShares } = await import('$lib/server/shares');
-			const shares = await getIncomingShares(userId);
-			const matchingShare = shares.find(
-				(share) =>
-					share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
-			);
-
-			if (!matchingShare) {
-				return json({ error: 'Share access not found' }, { status: 404 });
-			}
-
-			targetUserId = matchingShare.ownerId;
-			isSharedWrite = true;
 		}
 
 		let successCount = 0;
