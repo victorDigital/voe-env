@@ -21,10 +21,7 @@
 
 <Button variant="link" size="sm" onclick={onNavigate} class="h-auto gap-1 p-0">
 	{#if isShared}
-		<div class="relative">
-			<Folder class="h-4 w-4 text-blue-500" />
-			<Users class="absolute -bottom-1 -right-1 h-2.5 w-2.5 text-blue-600" />
-		</div>
+		<Users class="h-4 w-4 text-muted-foreground" />
 	{:else}
 		<Folder class="h-4 w-4 text-muted-foreground" />
 	{/if}
