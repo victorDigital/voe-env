@@ -16,6 +16,7 @@ export const user = pgTable('user', {
 	email: text('email').notNull().unique(),
 	emailVerified: boolean('email_verified').default(false).notNull(),
 	image: text('image'),
+	publicKey: text('public_key'),
 	createdAt: timestamp('created_at').defaultNow().notNull(),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()
@@ -143,7 +144,7 @@ export const folderShares = pgTable(
 			.references(() => user.id, { onDelete: 'cascade' }),
 		folderPath: text('folderPath').notNull(),
 		permission: text('permission').notNull().$type<'read' | 'readwrite'>(),
-		vaultPassword: text('vaultPassword').notNull(),
+		encryptedVaultPassword: text('encryptedVaultPassword').notNull(),
 		createdAt: timestamp('createdAt').defaultNow().notNull(),
 		expiresAt: timestamp('expiresAt')
 	},

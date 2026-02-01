@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1769711033389,
-      "tag": "0000_young_phil_sheldon",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1769712791968,
-      "tag": "0001_tan_elektra",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1769716526223,
-      "tag": "0002_brainy_betty_ross",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1769781504332,
-      "tag": "0003_legal_baron_strucker",
+      "when": 1769962356305,
+      "tag": "0000_high_mentor",
       "breakpoints": true
     }
   ]

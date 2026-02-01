@@ -11,7 +11,7 @@ interface TreeNode {
 	isShared?: boolean;
 	sharedBy?: { email: string; name: string };
 	permission?: 'read' | 'readwrite';
-	vaultPassword?: string;
+	encryptedVaultPassword?: string;
 }
 
 interface TreeEntry {
@@ -21,7 +21,7 @@ interface TreeEntry {
 	isShared?: boolean;
 	sharedBy?: { email: string; name: string };
 	permission?: 'read' | 'readwrite';
-	vaultPassword?: string;
+	encryptedVaultPassword?: string;
 }
 
 export const GET: RequestHandler = async ({ request }) => {
@@ -88,7 +88,7 @@ export const GET: RequestHandler = async ({ request }) => {
 						isShared: isLast ? true : undefined,
 						sharedBy: isLast ? share.owner : undefined,
 						permission: isLast ? share.permission : undefined,
-						vaultPassword: isLast ? share.vaultPassword : undefined
+						encryptedVaultPassword: isLast ? share.encryptedVaultPassword : undefined
 					});
 				} else if (isLast) {
 					// Mark existing folder as also being shared
@@ -96,7 +96,7 @@ export const GET: RequestHandler = async ({ request }) => {
 					node.isShared = true;
 					node.sharedBy = share.owner;
 					node.permission = share.permission;
-					node.vaultPassword = share.vaultPassword;
+					node.encryptedVaultPassword = share.encryptedVaultPassword;
 				}
 
 				current = current.get(part)!.children;
@@ -113,7 +113,7 @@ export const GET: RequestHandler = async ({ request }) => {
 					isShared: node.isShared,
 					sharedBy: node.sharedBy,
 					permission: node.permission,
-					vaultPassword: node.vaultPassword
+					encryptedVaultPassword: node.encryptedVaultPassword
 				};
 				if (node.children.size > 0) {
 					entry.children = buildTree(node.children);

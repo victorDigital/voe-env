@@ -15,7 +15,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	try {
 		const body = await request.json();
-		const { folderPath, recipientEmail, permission = 'read', vaultPassword, expiresAt } = body;
+		const { folderPath, recipientEmail, permission = 'read', encryptedVaultPassword, expiresAt } = body;
 
 		if (!folderPath || typeof folderPath !== 'string') {
 			return json({ error: 'folderPath is required' }, { status: 400 });
@@ -25,8 +25,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ error: 'recipientEmail is required' }, { status: 400 });
 		}
 
-		if (!vaultPassword || typeof vaultPassword !== 'string') {
-			return json({ error: 'vaultPassword is required' }, { status: 400 });
+		if (!encryptedVaultPassword || typeof encryptedVaultPassword !== 'string') {
+			return json({ error: 'encryptedVaultPassword is required (vault password encrypted with recipient public key)' }, { status: 400 });
 		}
 
 		if (!['read', 'readwrite'].includes(permission)) {
@@ -54,6 +54,14 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ error: 'Cannot share with yourself' }, { status: 400 });
 		}
 
+		// Check if recipient has a public key set up
+		if (!recipient.publicKey) {
+			return json(
+				{ error: `User ${recipientEmail} has not set up their encryption keys yet. They need to log in to the web interface first.` },
+				{ status: 400 }
+			);
+		}
+
 		// Check if already shared
 		const existingShare = await hasShareAccess(recipient.id, folderPath);
 		if (existingShare.hasAccess) {
@@ -63,14 +71,14 @@ export const POST: RequestHandler = async ({ request }) => {
 			);
 		}
 
-		// Create the share
+		// Create the share with encrypted vault password
 		const expiresDate = expiresAt ? new Date(expiresAt) : undefined;
 		const share = await createShare(
 			ownerId,
 			recipient.id,
 			folderPath,
 			permission,
-			vaultPassword,
+			encryptedVaultPassword,
 			expiresDate
 		);
 

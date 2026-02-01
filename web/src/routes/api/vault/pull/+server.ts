@@ -78,7 +78,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 			isShared: true,
 			sharedBy: matchingShare.owner,
 			permission: matchingShare.permission,
-			vaultPassword: matchingShare.vaultPassword
+			encryptedVaultPassword: matchingShare.encryptedVaultPassword
 		});
 	} catch (error: any) {
 		console.error('Pull vault error:', error);

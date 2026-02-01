@@ -11,7 +11,7 @@ export async function createShare(
 	sharedWithId: string,
 	folderPath: string,
 	permission: 'read' | 'readwrite',
-	vaultPassword: string,
+	encryptedVaultPassword: string,
 	expiresAt?: Date
 ): Promise<FolderShare> {
 	const id = randomUUID();
@@ -23,7 +23,7 @@ export async function createShare(
 		sharedWithId,
 		folderPath,
 		permission,
-		vaultPassword,
+		encryptedVaultPassword,
 		createdAt: now,
 		expiresAt
 	});
@@ -34,9 +34,9 @@ export async function createShare(
 		sharedWithId,
 		folderPath,
 		permission,
-		vaultPassword,
+		encryptedVaultPassword,
 		createdAt: now,
-		expiresAt
+		expiresAt: expiresAt ?? null
 	};
 }
 
@@ -149,7 +149,7 @@ export async function getShareById(
 		owner: share.ownerEmail
 			? {
 					email: share.ownerEmail,
-					name: share.ownerName
+					name: share.ownerName ?? share.ownerEmail
 				}
 			: undefined
 	};
@@ -162,22 +162,28 @@ export async function hasShareAccess(
 ): Promise<{
 	hasAccess: boolean;
 	permission?: 'read' | 'readwrite';
-	vaultPassword?: string;
+	encryptedVaultPassword?: string;
 }> {
 	const now = new Date();
 
+	// Check if user has access to this folder path
+	// A share grants access to the shared folder and all its subfolders
+	// So if share is for "org:product", user can access "org:product", "org:product:dev", etc.
 	const [share] = await db
 		.select({
 			permission: folderShares.permission,
-			vaultPassword: folderShares.vaultPassword
+			encryptedVaultPassword: folderShares.encryptedVaultPassword
 		})
 		.from(folderShares)
 		.where(
 			and(
 				eq(folderShares.sharedWithId, userId),
 				or(
-					like(folderShares.folderPath, `${folderPath}:%`),
-					eq(folderShares.folderPath, folderPath)
+					// Exact match: share for this exact path
+					eq(folderShares.folderPath, folderPath),
+					// Share is a parent: share path is a prefix of the requested path
+					// e.g., share is "org:product" and user requests "org:product:dev"
+					sql`${folderPath} LIKE ${folderShares.folderPath} || ':%'`
 				),
 				or(
 					isNull(folderShares.expiresAt),
@@ -198,22 +204,45 @@ export async function hasShareAccess(
 	return {
 		hasAccess: true,
 		permission: share.permission,
-		vaultPassword: share.vaultPassword
+		encryptedVaultPassword: share.encryptedVaultPassword
 	};
 }
 
-export async function getUserByEmail(email: string): Promise<{ id: string; email: string; name: string } | null> {
+export async function getUserByEmail(email: string): Promise<{ id: string; email: string; name: string; publicKey: string | null } | null> {
 	const [userRecord] = await db
 		.select({
 			id: user.id,
 			email: user.email,
-			name: user.name
+			name: user.name,
+			publicKey: user.publicKey
 		})
 		.from(user)
 		.where(eq(user.email, email))
 		.limit(1);
 
 	return userRecord || null;
+}
+
+export async function getUserPublicKey(userId: string): Promise<string | null> {
+	const [userRecord] = await db
+		.select({
+			publicKey: user.publicKey
+		})
+		.from(user)
+		.where(eq(user.id, userId))
+		.limit(1);
+
+	return userRecord?.publicKey || null;
+}
+
+export async function setUserPublicKey(userId: string, publicKey: string): Promise<boolean> {
+	const result = await db
+		.update(user)
+		.set({ publicKey })
+		.where(eq(user.id, userId))
+		.returning();
+
+	return result.length > 0;
 }
 
 export async function updateSharePermission(

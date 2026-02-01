@@ -4,7 +4,7 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
-	import { enhance } from '$app/forms';
+	import { encryptWithPublicKey } from '$lib/crypto';
 
 	let { open = $bindable(false), folderPath, vaultPassword }: { open: boolean; folderPath: string; vaultPassword: string } = $props();
 
@@ -19,8 +19,7 @@
 		{ value: 'readwrite', label: 'Read & Write', description: 'Can view, modify, and delete values' }
 	];
 
-	async function handleSubmit(e: SubmitEvent) {
-		e.preventDefault();
+	async function handleSubmit() {
 		error = '';
 		success = '';
 
@@ -30,13 +29,27 @@
 		}
 
 		if (!vaultPassword) {
-			error = 'Vault password is required to share';
+			error = 'Vault must be unlocked to share';
 			return;
 		}
 
 		isSubmitting = true;
 
 		try {
+			// First, get the recipient's public key
+			const keyResponse = await fetch(`/api/keys?email=${encodeURIComponent(recipientEmail)}`);
+			const keyResult = await keyResponse.json();
+
+			if (!keyResponse.ok) {
+				error = keyResult.error || 'Failed to get recipient public key';
+				isSubmitting = false;
+				return;
+			}
+
+			// Encrypt the vault password with recipient's public key
+			const encryptedVaultPassword = await encryptWithPublicKey(vaultPassword, keyResult.publicKey);
+
+			// Create the share with encrypted vault password
 			const response = await fetch('/api/shares', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -44,7 +57,7 @@
 					folderPath,
 					recipientEmail,
 					permission,
-					vaultPassword
+					encryptedVaultPassword
 				})
 			});
 
@@ -117,15 +130,15 @@
 			{/if}
 		</form>
 
-		<Dialog.Footer>
-			<Button variant="outline" onclick={() => (open = false)} disabled={isSubmitting}>Cancel</Button>
-			<Button type="submit" disabled={isSubmitting || !recipientEmail} onclick={handleSubmit}>
-				{#if isSubmitting}
-					Sharing...
-				{:else}
-					Share Folder
-				{/if}
-			</Button>
-		</Dialog.Footer>
+	<Dialog.Footer>
+		<Button variant="outline" onclick={() => (open = false)} disabled={isSubmitting}>Cancel</Button>
+		<Button disabled={isSubmitting || !recipientEmail} onclick={handleSubmit}>
+			{#if isSubmitting}
+				Sharing...
+			{:else}
+				Share Folder
+			{/if}
+		</Button>
+	</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

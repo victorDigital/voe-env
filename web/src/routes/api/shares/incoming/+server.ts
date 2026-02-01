@@ -21,7 +21,7 @@ export const GET: RequestHandler = async ({ request }) => {
 				id: share.id,
 				folderPath: share.folderPath,
 				permission: share.permission,
-				vaultPassword: share.vaultPassword,
+				encryptedVaultPassword: share.encryptedVaultPassword,
 				sharedBy: {
 					email: share.owner.email,
 					name: share.owner.name

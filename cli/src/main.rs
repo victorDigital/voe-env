@@ -1406,42 +1406,22 @@ fn cmd_validate() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn cmd_share(folder_path: String, recipient_email: String, permission: String) -> Result<(), Box<dyn std::error::Error>> {
-    println!("📤 Sharing folder '{}' with '{}' as '{}'", folder_path, recipient_email, permission);
-
-    // Validate permission
-    if permission != "read" && permission != "readwrite" {
-        return Err("Permission must be 'read' or 'readwrite'".into());
-    }
-
-    // Get vault password - we need it to share
-    let vault_password = rpassword::read_password()?;
-    if vault_password.is_empty() {
-        return Err("Vault password is required to share a folder".into());
-    }
-
-    let base_url = get_base_url();
-    let request = serde_json::json!({
-        "folderPath": folder_path,
-        "recipientEmail": recipient_email,
-        "permission": permission,
-        "vaultPassword": vault_password
-    });
-
-    let response: ShareResponse = make_authenticated_request(
-        reqwest::Method::POST,
-        &format!("{}/api/shares", base_url),
-        Some(&request),
-    )
-    .await?;
-
-    if let Some(error) = response.error {
-        return Err(format!("Share failed: {}", error).into());
-    }
-
-    if response.success {
-        println!("✅ {}", response.message.unwrap_or_else(|| "Folder shared successfully".to_string()));
-    }
-
+    // Note: Sharing from CLI requires public key encryption which is not yet implemented.
+    // For now, use the web interface to share folders.
+    // 
+    // The sharing flow requires:
+    // 1. Fetch recipient's public key from server
+    // 2. Encrypt the vault password with recipient's public key
+    // 3. Send the encrypted password to create the share
+    //
+    // This maintains end-to-end encryption since the server never sees the plaintext password.
+    
+    println!("⚠️  CLI sharing is not yet supported with the new E2E encryption.");
+    println!("   Please use the web interface at {} to share folders.", get_base_url());
+    println!();
+    println!("   Alternatively, you can manually share the vault password securely");
+    println!("   and have the recipient use 've pull -p {} -P <password>'", folder_path);
+    
     Ok(())
 }
 

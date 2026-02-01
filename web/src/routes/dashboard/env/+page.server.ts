@@ -2,6 +2,14 @@ import { redirect } from '@sveltejs/kit';
 import { listEnv, setEnv, getEnv, deleteEnv, getVaultEnv, getSharedVaultEnv } from '$lib/server/env-vault';
 import { hasShareAccess, getIncomingShares } from '$lib/server/shares';
 
+type EnvItem = {
+	name: string;
+	type: 'folder' | 'key';
+	isShared?: boolean;
+	sharedBy?: { email: string; name: string };
+	permission?: 'read' | 'readwrite';
+};
+
 export const load = async ({ locals, url }: any) => {
 	// Ensure user is authenticated
 	if (!locals.user || !locals.session) {
@@ -21,17 +29,19 @@ export const load = async ({ locals, url }: any) => {
 		isShared: boolean;
 		sharedBy?: { email: string; name: string };
 		permission?: 'read' | 'readwrite';
-		vaultPassword?: string;
+		encryptedVaultPassword?: string;
 	} = { isShared: false };
 
-	// If no own data, check for shared access
-	if (Object.keys(ownEnvs).length === 0 && path) {
+	// Get all incoming shares
+	const allShares = await getIncomingShares(userId);
+
+	// Check if current path is within a shared folder
+	if (path) {
 		const shareAccess = await hasShareAccess(userId, path, 'read');
 
 		if (shareAccess.hasAccess) {
 			// Get the specific share details
-			const shares = await getIncomingShares(userId);
-			const matchingShare = shares.find(
+			const matchingShare = allShares.find(
 				(share) => share.folderPath === path || path.startsWith(share.folderPath + ':')
 			);
 
@@ -42,7 +52,7 @@ export const load = async ({ locals, url }: any) => {
 					isShared: true,
 					sharedBy: matchingShare.owner,
 					permission: matchingShare.permission,
-					vaultPassword: matchingShare.vaultPassword
+					encryptedVaultPassword: matchingShare.encryptedVaultPassword
 				};
 			}
 		}
@@ -52,7 +62,7 @@ export const load = async ({ locals, url }: any) => {
 	const encryptedEnvs = { ...sharedEnvs, ...ownEnvs };
 
 	// If shared and no own items, we need to construct items from sharedEnvs
-	let items = ownItems;
+	let items: EnvItem[] = ownItems;
 	if (shareInfo.isShared && ownItems.length === 0) {
 		// Build items from sharedEnvs keys
 		items = Object.keys(sharedEnvs).map((key) => ({
@@ -61,34 +71,59 @@ export const load = async ({ locals, url }: any) => {
 		}));
 	}
 
-	// Mark shared folders in items list
-	if (path) {
-		// Get all incoming shares to check if any folders at this level are shared
-		const allShares = await getIncomingShares(userId);
-		const sharesAtThisLevel = allShares.filter((share) => {
-			// Check if this share is at the current path level
-			const shareParent = share.folderPath.split(':').slice(0, -1).join(':');
+	// Add shared folders to items list
+	// Find shares that should appear at the current path level
+	const sharesAtThisLevel = allShares.filter((share) => {
+		const shareParts = share.folderPath.split(':');
+		if (path === '') {
+			// At root level, show shares whose first segment doesn't exist in own items
+			return shareParts.length >= 1;
+		} else {
+			// At a specific path, show shares that are direct children
+			const shareParent = shareParts.slice(0, -1).join(':');
 			return shareParent === path;
-		});
+		}
+	});
 
-		// Mark items that are shared folders
-		items = items.map((item) => {
-			if (item.type === 'folder') {
-				const matchingShare = sharesAtThisLevel.find((share) =>
-					share.folderPath.endsWith(`:${item.name}`)
-				);
-				if (matchingShare) {
-					return {
-						...item,
-						isShared: true,
-						sharedBy: matchingShare.owner,
-						permission: matchingShare.permission
-					};
-				}
-			}
-			return item;
-		});
+	// Build a map of items by name to avoid duplicates
+	const itemsMap = new Map<string, EnvItem>();
+	for (const item of items) {
+		itemsMap.set(item.name, item);
 	}
+
+	// Add or mark shared folders
+	for (const share of sharesAtThisLevel) {
+		const shareParts = share.folderPath.split(':');
+		const pathParts = path ? path.split(':') : [];
+		
+		// Get the name of the folder at the current level
+		const folderName = shareParts[pathParts.length];
+		if (!folderName) continue;
+
+		const existingItem = itemsMap.get(folderName);
+		if (existingItem) {
+			// Mark existing folder as shared
+			if (existingItem.type === 'folder') {
+				itemsMap.set(folderName, {
+					...existingItem,
+					isShared: true,
+					sharedBy: share.owner,
+					permission: share.permission
+				});
+			}
+		} else {
+			// Add new shared folder
+			itemsMap.set(folderName, {
+				name: folderName,
+				type: 'folder' as const,
+				isShared: true,
+				sharedBy: share.owner,
+				permission: share.permission
+			});
+		}
+	}
+
+	items = Array.from(itemsMap.values());
 
 	return {
 		session: locals.session,

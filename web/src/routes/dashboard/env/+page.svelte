@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -15,12 +16,18 @@
 	import Share2 from '@lucide/svelte/icons/share-2';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
 	import ShareDialog from './ShareDialog.svelte';
+	import { initializeKeys, getStoredPrivateKey, decryptWithPrivateKey } from '$lib/crypto';
 
 	let { data, form }: { data: PageData; form: any } = $props();
 
 	let currentPath = $derived(data.path);
-	let shareInfo = $derived(data.shareInfo || { isShared: false });
-    let vaultPassword = $state('');
+	let shareInfo = $derived(data.shareInfo || { isShared: false }) as {
+		isShared: boolean;
+		sharedBy?: { email: string; name: string };
+		permission?: 'read' | 'readwrite';
+		encryptedVaultPassword?: string;
+	};
+	let vaultPassword = $state('');
 	let tempPassword = $state('');
 	let deleteKey = $state('');
 	let showPasswordPrompt = $state(false);
@@ -29,17 +36,49 @@
 	let showAllValues = $state(false);
 	let pendingShowAll = $state(false);
 	let showShareDialog = $state(false);
+	let keysInitialized = $state(false);
 
 	let encryptedEnvs = $derived(data.encryptedEnvs || {});
 	let decryptedEnvs = $state<Record<string, string>>({});
 	let breadcrumbs = $derived(currentPath ? currentPath.split(':') : []);
 
-	// Auto-unlock shared folders if vault password is provided
-	$effect(() => {
-		if (shareInfo.isShared && shareInfo.vaultPassword && !vaultPassword) {
-			vaultPassword = shareInfo.vaultPassword;
+	// Initialize encryption keys on mount
+	onMount(async () => {
+		try {
+			const { publicKey, isNew } = await initializeKeys();
+			if (isNew) {
+				// Register public key with server
+				await fetch('/api/keys', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ publicKey })
+				});
+			}
+			keysInitialized = true;
+		} catch (err) {
+			console.error('Failed to initialize encryption keys:', err);
 		}
 	});
+
+	// Auto-unlock shared folders by decrypting the vault password with private key
+	$effect(() => {
+		if (shareInfo.isShared && shareInfo.encryptedVaultPassword && !vaultPassword && keysInitialized) {
+			decryptSharedPassword();
+		}
+	});
+
+	async function decryptSharedPassword() {
+		const privateKey = getStoredPrivateKey();
+		if (!privateKey || !shareInfo.encryptedVaultPassword) return;
+
+		try {
+			const decryptedPassword = await decryptWithPrivateKey(shareInfo.encryptedVaultPassword, privateKey);
+			vaultPassword = decryptedPassword;
+		} catch (err) {
+			console.error('Failed to decrypt shared vault password:', err);
+			// User will need to enter password manually
+		}
+	}
 
 	async function deriveKey(password: string): Promise<CryptoKey> {
 		const keyMaterial = await crypto.subtle.importKey(
