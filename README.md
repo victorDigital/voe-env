@@ -8,7 +8,7 @@ docker compose up -d --build
 
 Open http://localhost:3000. The existing authentication and CLI release environment variables still apply. No `DATABASE_URL` is needed for Compose.
 
-Compose generates a database password on first startup and keeps it across restarts. PostgreSQL runs on the internal Compose network, and the web app applies migrations after the database is ready.
+The database container generates its password on first startup and keeps it across restarts. PostgreSQL runs on the internal Compose network, and the web app applies migrations after the database is ready.
 
 The `postgres-data` volume stores the database and `db-password` stores its password. Include both volumes in backups. The existing `db-data` app volume is retained.
 
