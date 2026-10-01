@@ -1,0 +1,134 @@
+name: CLI
+
+on:
+  push:
+    branches: [main]
+    tags: ["cli-v*"]
+    paths:
+      - "cli/**"
+      - "web/static/install.*"
+      - ".github/workflows/cli.yml"
+  pull_request:
+    paths:
+      - "cli/**"
+      - "web/static/install.*"
+      - ".github/workflows/cli.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: ve-linux-amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: ve-linux-arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: ve-darwin-amd64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            asset: ve-darwin-arm64
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            asset: ve-windows-amd64.exe
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            asset: ve-windows-arm64.exe
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CLI_TARGET: ${{ matrix.target }}
+      CLI_ASSET: ${{ matrix.asset }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "$CLI_TARGET"
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Cache Rust dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: rust-${{ matrix.target }}-${{ hashFiles('cli/Cargo.lock') }}
+      - name: Build
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export RUSTFLAGS="-C target-feature=+crt-static"
+          fi
+          cargo build --manifest-path cli/Cargo.toml --locked --release --target "$CLI_TARGET"
+      - name: Verify and package
+        run: |
+          mkdir -p dist
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary="cli/target/$CLI_TARGET/release/ve.exe"
+            test_python=python
+          else
+            binary="cli/target/$CLI_TARGET/release/ve"
+            test_python=python3
+            sh -n web/static/install.sh
+          fi
+          "$binary" --help
+          "$test_python" cli/tests/test_update.py "$binary"
+          cp "$binary" "dist/$CLI_ASSET"
+      - name: Check PowerShell installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/web/static/install.ps1", [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/cli-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CLI_RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish binaries and checksums
+        run: |
+          cd dist
+          sha256sum ve-* > SHA256SUMS
+          if gh release view "$CLI_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$CLI_RELEASE_TAG" ./* --clobber
+          else
+            gh release create "$CLI_RELEASE_TAG" ./* --verify-tag --title "VOE CLI ${CLI_RELEASE_TAG#cli-v}" --generate-notes
+          fi

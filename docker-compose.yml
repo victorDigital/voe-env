@@ -12,9 +12,9 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - NODE_ENV=production
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL}
-      - VOE_AUTH_CLIENT_ID=${VOE_AUTH_CLIENT_ID}
-      - VOE_AUTH_CLIENT_SECRET=${VOE_AUTH_CLIENT_SECRET}
+      - VOE_CLI_RELEASE_URL=${VOE_CLI_RELEASE_URL:-https://github.com/victorDigital/voe-env/releases/latest/download}
     volumes:
       - db-data:/data
     restart: unless-stopped

@@ -4,7 +4,7 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ locals, url }) => {
 	// Require authentication for device authorization
 	if (!locals.user || !locals.session) {
-		throw redirect(302, '/');
+		throw redirect(302, `/?redirectTo=${encodeURIComponent(url.pathname + url.search)}`);
 	}
 
 	return {

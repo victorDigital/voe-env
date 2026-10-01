@@ -3,12 +3,13 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from './db';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
-import { genericOAuth, deviceAuthorization, bearer } from 'better-auth/plugins';
+import { deviceAuthorization, bearer } from 'better-auth/plugins';
 import { createAuthMiddleware } from 'better-auth/plugins';
 import { deviceLog, deviceCode } from './db/schema';
 import { eq } from 'drizzle-orm';
 import type { BetterAuthPlugin } from 'better-auth';
-import { BETTER_AUTH_URL, VOE_AUTH_CLIENT_ID, VOE_AUTH_CLIENT_SECRET } from '$env/static/private';
+import { BETTER_AUTH_URL } from '$env/static/private';
+import { env } from '$env/dynamic/private';
 
 const deviceLogPlugin = (): BetterAuthPlugin => ({
 	id: 'device-log',
@@ -50,25 +51,18 @@ export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: 'pg'
 	}),
-	baseUrl: BETTER_AUTH_URL,
+	baseURL: BETTER_AUTH_URL,
+	secret: env.BETTER_AUTH_SECRET,
+	emailAndPassword: {
+		enabled: true
+	},
 	trustedOrigins: ['http://localhost:5173', 'https://env.voe.dk'],
 	plugins: [
-		genericOAuth({
-			config: [
-				{
-					providerId: 'voe-auth',
-					clientId: VOE_AUTH_CLIENT_ID,
-					pkce: true,
-					clientSecret: VOE_AUTH_CLIENT_SECRET,
-					discoveryUrl: 'https://auth.voe.dk/.well-known/openid-configuration'
-				}
-			]
-		}),
 		deviceAuthorization({
 			verificationUri: '/device'
 		}),
 		bearer(),
-		sveltekitCookies(getRequestEvent),
-		deviceLogPlugin()
+		deviceLogPlugin(),
+		sveltekitCookies(getRequestEvent)
 	]
 });

@@ -11,14 +11,11 @@ A minimal command-line interface for interacting with the VOE environment vault.
 
 ## Installation
 
-### Quick Install
+### Hosted installer
 
-```bash
-cd cli
-./install.sh
-```
+Open your VOE site's homepage and copy the install command for your platform. It downloads the matching binary, adds `ve` to PATH, and saves the site URL in `~/.voe/server-url`. Open a new terminal and run `ve auth` to sign in.
 
-This will build and install the CLI as the `ve` command globally.
+The installer supports macOS, Linux (including WSL), and Windows on x86_64 and ARM64. Rust is only required when building the CLI from source.
 
 ### Manual Installation
 
@@ -53,6 +50,10 @@ ve test
 
 The `ve test` command will automatically authenticate if no valid token is found.
 
+## Updating
+
+Run `ve update` to download the latest platform binary from your configured site and replace the current executable. Your saved site URL, login token, and environment files are preserved. `VOE_BASE_URL` can override the site used for updates.
+
 ## Building
 
 ### Quick Build
@@ -72,6 +73,7 @@ make dev
 # or
 cargo build
 ```
+
 # VOE CLI
 
 VOE (Vault of Environments) CLI - Secure environment variable management with online vault storage.
@@ -92,6 +94,7 @@ The CLI automatically keeps `.env.example` files in sync with your local environ
 - **Preserves structure** - maintains existing comments and formatting in `.env.example`
 
 Example `.env.example`:
+
 ```bash
 # Database configuration
 DATABASE_URL=xxx
@@ -142,16 +145,28 @@ DEBUG=xxx
 
 ## Configuration
 
-Set the `VOE_BASE_URL` environment variable to match your server URL (default: http://localhost:5173).
+The CLI uses the URL saved by the hosted installer. Set `VOE_BASE_URL` to override it. Without either setting, the default is `https://env.voe.dk`.
 
 ```bash
 export VOE_BASE_URL=https://your-server.com
 ve auth
 ```
 
+## CI and releases
+
+`.github/workflows/cli.yml` builds all six platform binaries on pull requests and pushes to `main`. Pushing a `cli-v*` tag also publishes the binaries and `SHA256SUMS` as a GitHub release:
+
+```bash
+git tag cli-v0.1.0
+git push origin cli-v0.1.0
+```
+
+Commit and push the CLI and workflow changes before tagging. The first release must be published before the homepage installer can download binaries. The web app redirects `/downloads/<asset>` to the latest release; set `VOE_CLI_RELEASE_URL` to a specific release's download URL to pin the version.
+
 ## Token Storage
 
 Tokens are stored in `~/.voe/token.json` and are automatically:
+
 - Loaded on startup
 - Validated for expiration
 - Refreshed if invalid

@@ -29,6 +29,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(about = "Update ve to the latest release")]
+    Update,
     /// Authenticate with the VOE server
     Auth,
     /// Test the protected API endpoint
@@ -271,9 +273,13 @@ struct SharesResponse {
 
 // Helper functions
 
-fn get_token_path() -> PathBuf {
+fn get_voe_dir() -> PathBuf {
     let home = env::var("HOME").unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_default());
-    PathBuf::from(home).join(".voe").join("token.json")
+    PathBuf::from(home).join(".voe")
+}
+
+fn get_token_path() -> PathBuf {
+    get_voe_dir().join("token.json")
 }
 
 fn load_token() -> Option<TokenStorage> {
@@ -397,7 +403,47 @@ async fn get_or_authenticate_token() -> Result<TokenStorage, Box<dyn std::error:
 }
 
 fn get_base_url() -> String {
-    env::var("VOE_BASE_URL").unwrap_or_else(|_| "https://env.voe.dk".to_string())
+    env::var("VOE_BASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| fs::read_to_string(get_voe_dir().join("server-url")).ok())
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| "https://env.voe.dk".to_string())
+}
+
+async fn cmd_update() -> Result<(), Box<dyn std::error::Error>> {
+    let (asset, header): (&str, &[u8]) = match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "x86_64") => ("ve-darwin-amd64", b"\xcf\xfa\xed\xfe"),
+        ("macos", "aarch64") => ("ve-darwin-arm64", b"\xcf\xfa\xed\xfe"),
+        ("linux", "x86_64") => ("ve-linux-amd64", b"\x7fELF"),
+        ("linux", "aarch64") => ("ve-linux-arm64", b"\x7fELF"),
+        ("windows", "x86_64") => ("ve-windows-amd64.exe", b"MZ"),
+        ("windows", "aarch64") => ("ve-windows-arm64.exe", b"MZ"),
+        _ => return Err("Updates are not supported on this platform".into()),
+    };
+
+    println!("Downloading the latest ve...");
+    let binary = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?
+        .get(format!("{}/downloads/{}", get_base_url(), asset))
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+
+    if !binary.starts_with(header) {
+        return Err("The download is not a valid executable for this platform".into());
+    }
+
+    let mut download = tempfile::NamedTempFile::new()?;
+    download.write_all(&binary)?;
+    download.flush()?;
+    self_replace::self_replace(download.path())?;
+    println!("Updated ve.");
+    Ok(())
 }
 
 async fn make_authenticated_request<T: Serialize, R: for<'de> Deserialize<'de>>(
@@ -1531,6 +1577,7 @@ async fn cmd_unshare(folder_path: String, recipient_email: String) -> Result<(),
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match &cli.command {
+        Commands::Update => cmd_update().await,
         Commands::Auth => cmd_auth().await,
         Commands::Test => cmd_test().await,
         Commands::Init {
