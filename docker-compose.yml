@@ -1,6 +1,39 @@
-version: "3.8"
-
 services:
+  init-db-password:
+    image: postgres:17
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        if [ ! -s /run/voe/password ]; then
+          umask 077
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /run/voe/password.tmp
+          chmod 444 /run/voe/password.tmp
+          mv /run/voe/password.tmp /run/voe/password
+        fi
+    volumes:
+      - db-password:/run/voe
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: voe
+      POSTGRES_USER: voe
+      POSTGRES_PASSWORD_FILE: /run/voe/password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - db-password:/run/voe:ro
+    depends_on:
+      init-db-password:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voe -d voe"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   web:
     build:
       context: ./web
@@ -9,7 +42,6 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
       - NODE_ENV=production
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
@@ -17,8 +49,13 @@ services:
       - VOE_CLI_RELEASE_URL=${VOE_CLI_RELEASE_URL:-https://github.com/victorDigital/voe-env/releases/latest/download}
     volumes:
       - db-data:/data
+      - db-password:/run/voe:ro
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   db-data:
-    driver: local
+  postgres-data:
+  db-password:

@@ -8,8 +8,8 @@ import { createAuthMiddleware } from 'better-auth/plugins';
 import { deviceLog, deviceCode } from './db/schema';
 import { eq } from 'drizzle-orm';
 import type { BetterAuthPlugin } from 'better-auth';
-import { BETTER_AUTH_URL } from '$env/static/private';
 import { env } from '$env/dynamic/private';
+import { building } from '$app/environment';
 
 const deviceLogPlugin = (): BetterAuthPlugin => ({
 	id: 'device-log',
@@ -51,8 +51,8 @@ export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: 'pg'
 	}),
-	baseURL: BETTER_AUTH_URL,
-	secret: env.BETTER_AUTH_SECRET,
+	baseURL: env.BETTER_AUTH_URL || undefined,
+	secret: building ? crypto.randomUUID() : env.BETTER_AUTH_SECRET,
 	emailAndPassword: {
 		enabled: true
 	},

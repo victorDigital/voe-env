@@ -1,13 +1,10 @@
 import { auth } from '$lib/server/auth';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
-import { building, dev } from '$app/environment';
+import { building } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import type { ServerInit } from '@sveltejs/kit';
-import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import postgres from 'postgres';
-import * as schema from '$lib/server/db/schema';
-import { DATABASE_URL } from '$env/static/private';
+import { db } from '$lib/server/db';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = await auth.api.getSession({
@@ -21,25 +18,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 };
 
 export const init: ServerInit = async () => {
-	console.log('[INIT] Running database initialization...');
-	console.log('[INIT] Environment - dev:', dev, 'NODE_ENV:', process.env.NODE_ENV);
+	if (building) return;
 
-	if (!DATABASE_URL) {
-		console.error('[INIT] ✗ DATABASE_URL environment variable is required');
-		throw new Error('DATABASE_URL environment variable is required');
-	}
+	console.log('[INIT] Running database initialization...');
 
 	try {
-		console.log('[INIT] Connecting to PostgreSQL...');
-
-		const db = drizzle({ connection: DATABASE_URL });
-
-		// Determine migrations folder path
-		const migrationsFolder = dev ? './drizzle' : '/app/drizzle';
-		console.log('[INIT] Migrations folder:', migrationsFolder);
-
-		// Run migrations
-		await migrate(db, { migrationsFolder });
+		await migrate(db, { migrationsFolder: './drizzle' });
 
 		console.log('[INIT] ✓ Migrations completed successfully');
 	} catch (error) {
