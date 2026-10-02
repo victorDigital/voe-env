@@ -1,4 +1,4 @@
-import { env } from '$env/dynamic/private';
+import { VOE_CLI_RELEASE_URL } from '$app/env/private';
 import { error, redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
@@ -18,8 +18,8 @@ export const GET: RequestHandler = ({ params, setHeaders }) => {
 	}
 
 	const releaseURL =
-		env.VOE_CLI_RELEASE_URL || 'https://github.com/victorDigital/voe-env/releases/latest/download';
+		VOE_CLI_RELEASE_URL || 'https://github.com/victorDigital/voe-env/releases/latest/download';
 
 	setHeaders({ 'cache-control': 'no-store' });
-	throw redirect(302, `${releaseURL.replace(/\/$/, '')}/${params.asset}`);
+	throw redirect(302, `${releaseURL.replace(/\/$/, '')}/${params.asset}`, { external: true });
 };

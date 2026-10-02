@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { getVaultEnv, getSharedVaultEnv } from '$lib/server/env-vault';
-import { hasShareAccess } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { getVaultEnv, getSharedVaultEnv } from '#lib/server/env-vault.ts';
+import { hasShareAccess } from '#lib/server/shares.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ request, url }) => {
@@ -39,10 +39,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		const shareAccess = await hasShareAccess(userId, vaultPath, 'read');
 
 		if (!shareAccess.hasAccess) {
-			return json(
-				{ error: 'You do not have access to this vault path' },
-				{ status: 403 }
-			);
+			return json({ error: 'You do not have access to this vault path' }, { status: 403 });
 		}
 
 		// User has shared access - find the owner and get their data
@@ -52,20 +49,16 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		// Actually, let's get the specific share details
 
 		// Get all incoming shares that match this path
-		const { getIncomingShares } = await import('$lib/server/shares');
+		const { getIncomingShares } = await import('#lib/server/shares.ts');
 		const shares = await getIncomingShares(userId);
 
 		// Find the matching share
 		const matchingShare = shares.find(
-			(share) =>
-				share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
+			(share) => share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
 		);
 
 		if (!matchingShare) {
-			return json(
-				{ error: 'Shared folder access not found' },
-				{ status: 404 }
-			);
+			return json({ error: 'Shared folder access not found' }, { status: 404 });
 		}
 
 		// Get the shared data from the owner's vault

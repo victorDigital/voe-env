@@ -1,34 +1,40 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { authClient } from '$lib/auth-client';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
+	import RiCheckLine from 'remixicon-svelte/icons/check-line';
+	import RiFileCopyLine from 'remixicon-svelte/icons/file-copy-line';
+	import { Button } from '#lib/components/ui/button/index.ts';
+	import SiteHeader from '#lib/components/SiteHeader.svelte';
+	import SiteFooter from '#lib/components/SiteFooter.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-	let creatingAccount = $state(false);
-	let name = $state('');
-	let email = $state('');
-	let password = $state('');
-	let loading = $state(false);
-	let error = $state('');
-	let installerPlatform = $state<'unix' | 'windows'>('unix');
+	let platform = $state<'unix' | 'windows'>('unix');
 	let copied = $state(false);
 	let copyError = $state('');
 	let installCommand = $derived(
-		installerPlatform === 'windows'
+		platform === 'windows'
 			? `& ([scriptblock]::Create((irm '${page.url.origin.replaceAll("'", "''")}/install.ps1'))) -BaseUrl '${page.url.origin.replaceAll("'", "''")}'`
 			: `curl -fsSL ${shellQuote(`${page.url.origin}/install.sh`)} | sh -s -- ${shellQuote(page.url.origin)}`
 	);
+	const commands = [
+		{ command: 've auth', description: 'Sign in' },
+		{ command: 've init', description: 'Set project path and password' },
+		{ command: 've push', description: 'Upload .env' },
+		{ command: 've pull', description: 'Download .env' },
+		{ command: 've update', description: 'Update CLI' }
+	];
 
 	function shellQuote(value: string) {
 		return `'${value.replaceAll("'", "'\\''")}'`;
 	}
 
-	async function copyInstallCommand() {
+	function selectPlatform(value: 'unix' | 'windows') {
+		platform = value;
+		copied = false;
+		copyError = '';
+	}
+
+	async function copyCommand() {
 		copyError = '';
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
@@ -46,157 +52,264 @@
 			}
 			copied = true;
 		} catch {
-			copyError = 'Select and copy the command above.';
+			copyError = 'Select the command and copy it to your clipboard.';
 		}
-	}
-
-	function selectInstaller(platform: 'unix' | 'windows') {
-		installerPlatform = platform;
-		copied = false;
-		copyError = '';
-	}
-
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		if (loading) return;
-
-		loading = true;
-		error = '';
-
-		try {
-			const result = creatingAccount
-				? await authClient.signUp.email({ name: name.trim(), email: email.trim(), password })
-				: await authClient.signIn.email({ email: email.trim(), password });
-
-			if (result.error) {
-				error = result.error.message || 'Unable to sign in. Please try again.';
-				return;
-			}
-
-			password = '';
-			await goto(data.redirectTo, { invalidateAll: true });
-		} catch {
-			error = 'Unable to connect. Please try again.';
-		} finally {
-			loading = false;
-		}
-	}
-
-	function toggleMode() {
-		creatingAccount = !creatingAccount;
-		password = '';
-		error = '';
 	}
 </script>
 
 <svelte:head>
-	<title>{creatingAccount ? 'Create account' : 'Sign in'} | VOE</title>
+	<title>VOE · Encrypted .env files</title>
+	<meta
+		name="description"
+		content="Sync encrypted .env files across machines and share folder access."
+	/>
 </svelte:head>
 
-<div class="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-4">
-	<Card.Root class="w-full max-w-md">
-		<Card.Header class="text-center">
-			<Card.Title class="text-2xl font-semibold">
-				{creatingAccount ? 'Create account' : 'Welcome'}
-			</Card.Title>
-			<Card.Description>
-				{creatingAccount
-					? 'Create an account to access your environment vault'
-					: 'Sign in to access your environment vault'}
-			</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			<form onsubmit={submit}>
-				<fieldset disabled={loading} class="space-y-4">
-					{#if creatingAccount}
-						<div class="space-y-2">
-							<Label for="name">Name</Label>
-							<Input id="name" name="name" autocomplete="name" bind:value={name} required />
-						</div>
-					{/if}
-					<div class="space-y-2">
-						<Label for="email">Email</Label>
-						<Input
-							id="email"
-							name="email"
-							type="email"
-							autocomplete="email"
-							bind:value={email}
-							required
-						/>
+<div class="site-shell landing-shell">
+	<SiteHeader signedIn={data.signedIn} />
+	<main id="main-content">
+		<div class="overview">
+			<section class="intro" aria-labelledby="page-title">
+				<h1 id="page-title">Encrypted<br /><code>.env</code> files.</h1>
+				<p>Sync encrypted .env files across machines and share folder access.</p>
+			</section>
+			<section id="install" class="install-section" aria-labelledby="install-title">
+				<div class="section-heading">
+					<h2 id="install-title">Install CLI</h2>
+					<div class="platform-switch" role="group" aria-label="Installer platform">
+						<Button
+							variant={platform === 'unix' ? 'secondary' : 'ghost'}
+							size="sm"
+							class="platform-button"
+							aria-pressed={platform === 'unix'}
+							onclick={() => selectPlatform('unix')}>macOS / Linux</Button
+						>
+						<Button
+							variant={platform === 'windows' ? 'secondary' : 'ghost'}
+							size="sm"
+							class="platform-button"
+							aria-pressed={platform === 'windows'}
+							onclick={() => selectPlatform('windows')}>Windows</Button
+						>
 					</div>
-					<div class="space-y-2">
-						<Label for="password">Password</Label>
-						<Input
-							id="password"
-							name="password"
-							type="password"
-							autocomplete={creatingAccount ? 'new-password' : 'current-password'}
-							minlength={creatingAccount ? 8 : undefined}
-							maxlength={128}
-							aria-describedby={creatingAccount ? 'password-hint' : undefined}
-							bind:value={password}
-							required
-						/>
-						{#if creatingAccount}
-							<p id="password-hint" class="text-sm text-muted-foreground">
-								Use at least 8 characters.
-							</p>
-						{/if}
-					</div>
-					{#if error}
-						<p role="alert" class="text-sm text-destructive">{error}</p>
-					{/if}
-					<Button type="submit" class="w-full" disabled={loading}>
-						{loading ? 'Please wait…' : creatingAccount ? 'Create account' : 'Sign in'}
-					</Button>
-				</fieldset>
-			</form>
-			<Button variant="link" class="mt-2 w-full" onclick={toggleMode} disabled={loading}>
-				{creatingAccount ? 'Already have an account? Sign in' : 'Need an account? Create one'}
-			</Button>
-		</Card.Content>
-	</Card.Root>
-	<Card.Root class="w-full max-w-2xl">
-		<Card.Header>
-			<Card.Title>Install the CLI</Card.Title>
-			<Card.Description>
-				One command to install <code>ve</code> and connect it to this site.
-			</Card.Description>
-		</Card.Header>
-		<Card.Content class="space-y-3">
-			<div class="flex items-center justify-between gap-2">
-				<div class="flex gap-1" role="group" aria-label="Installer platform">
+				</div>
+				<div class="install-command">
+					<span class="prompt" aria-hidden="true">{platform === 'windows' ? '>' : '$'}</span>
+					<input
+						readonly
+						aria-label="Installation command"
+						value={installCommand}
+						spellcheck="false"
+					/>
 					<Button
-						size="sm"
-						variant={installerPlatform === 'unix' ? 'secondary' : 'ghost'}
-						aria-pressed={installerPlatform === 'unix'}
-						onclick={() => selectInstaller('unix')}
+						variant="ghost"
+						class="copy-command h-auto self-stretch border-0 border-l px-3"
+						onclick={copyCommand}
+						aria-label={copied ? 'Command copied' : 'Copy install command'}
 					>
-						macOS / Linux
-					</Button>
-					<Button
-						size="sm"
-						variant={installerPlatform === 'windows' ? 'secondary' : 'ghost'}
-						aria-pressed={installerPlatform === 'windows'}
-						onclick={() => selectInstaller('windows')}
-					>
-						Windows
+						{#if copied}<RiCheckLine class="size-4" aria-hidden="true" />{:else}<RiFileCopyLine
+								class="size-4"
+								aria-hidden="true"
+							/>{/if}
+						<span aria-live="polite">{copied ? 'Copied' : 'Copy'}</span>
 					</Button>
 				</div>
-				<Button size="sm" variant="outline" onclick={copyInstallCommand}>
-					{copied ? 'Copied' : 'Copy'}
-				</Button>
-			</div>
-			<pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs"><code>{installCommand}</code
-				></pre>
-			{#if copyError}
-				<p role="alert" class="text-sm text-destructive">{copyError}</p>
-			{/if}
-			<p class="text-sm text-muted-foreground">
-				Run in {installerPlatform === 'windows' ? 'PowerShell' : 'your terminal'}. Then open a new
-				terminal and run <code>ve auth</code>.
-			</p>
-		</Card.Content>
-	</Card.Root>
+				{#if copyError}<p role="alert" class="copy-error">{copyError}</p>{/if}
+				<p class="install-note">
+					Run in {platform === 'windows' ? 'PowerShell' : 'your terminal'}. Open a new terminal
+					after installation.
+				</p>
+			</section>
+		</div>
+		<section class="commands" aria-labelledby="commands-title">
+			<h2 id="commands-title">Commands</h2>
+			<dl>
+				{#each commands as item (item.command)}
+					<div>
+						<dt><code>{item.command}</code></dt>
+						<dd>{item.description}</dd>
+					</div>
+				{/each}
+			</dl>
+		</section>
+	</main>
+	<SiteFooter />
 </div>
+
+<style>
+	.landing-shell {
+		--landing-accent: color-mix(in oklch, var(--primary) 75%, var(--foreground));
+		max-width: 1040px;
+	}
+	.overview {
+		display: grid;
+		grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+		align-items: center;
+		gap: 64px;
+		padding: 80px 0 64px;
+	}
+	h1 {
+		font-size: clamp(40px, 4.5vw, 60px);
+		line-height: 1.05;
+		font-weight: 500;
+		letter-spacing: -0.06em;
+	}
+	h1 code {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+		letter-spacing: -0.075em;
+		color: var(--landing-accent);
+	}
+	.intro p {
+		margin-top: 20px;
+		max-width: 340px;
+		font-size: 15px;
+		line-height: 1.65;
+		color: var(--muted-foreground);
+	}
+	h2 {
+		font-size: 14px;
+		font-weight: 550;
+		line-height: 1.5;
+	}
+	.section-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin-bottom: 16px;
+	}
+	.platform-switch {
+		display: flex;
+		gap: 2px;
+	}
+	.platform-switch :global(.platform-button) {
+		height: 36px;
+		font-size: 12px;
+		font-weight: 400;
+		color: var(--muted-foreground);
+	}
+	.platform-switch :global(.platform-button[aria-pressed='true']) {
+		color: var(--foreground);
+		box-shadow: inset 0 -2px var(--landing-accent);
+	}
+	.install-command {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+		min-height: 60px;
+		border: 1px solid var(--border);
+		background: var(--muted);
+	}
+	.prompt {
+		padding-left: 16px;
+		font-family: var(--font-mono);
+		font-size: 13px;
+		color: var(--muted-foreground);
+	}
+	.install-command input {
+		min-width: 0;
+		width: 100%;
+		padding: 20px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 1.5;
+		background: transparent;
+	}
+	.install-command:focus-within {
+		outline: 2px solid var(--ring);
+		outline-offset: 3px;
+	}
+	.install-command input:focus-visible {
+		outline: none;
+	}
+	.install-command :global(.copy-command) {
+		min-width: 80px;
+		font-size: 12px;
+		font-weight: 400;
+		border-left-color: var(--border);
+		background: var(--background);
+	}
+	.install-command :global(.copy-command:hover) {
+		background: var(--accent);
+	}
+	.install-note {
+		margin-top: 14px;
+		color: var(--muted-foreground);
+		font-size: 12px;
+		line-height: 1.65;
+	}
+	.copy-error {
+		margin-top: 12px;
+		color: var(--destructive);
+		font-size: 13px;
+	}
+	.commands {
+		display: grid;
+		grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+		gap: 64px;
+		padding: 32px 0 48px;
+		border-top: 1px solid var(--border);
+	}
+	.commands h2 {
+		padding-top: 12px;
+	}
+	dl > div {
+		display: grid;
+		grid-template-columns: 104px minmax(0, 1fr);
+		align-items: baseline;
+		gap: 24px;
+		padding: 12px 0;
+		border-bottom: 1px solid var(--border);
+		font-size: 13px;
+		line-height: 1.5;
+	}
+	dl > div:last-child {
+		border-bottom: 0;
+	}
+	dt code {
+		font-family: var(--font-mono);
+		font-size: 12px;
+	}
+	dd {
+		color: var(--muted-foreground);
+	}
+	@media (max-width: 800px) {
+		.overview,
+		.commands {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 36px;
+		}
+		.overview {
+			padding: 48px 0 36px;
+		}
+		.intro p {
+			max-width: 440px;
+			font-size: 14px;
+		}
+		.commands {
+			gap: 12px;
+			padding: 24px 0 36px;
+		}
+		.commands h2 {
+			padding-top: 0;
+		}
+	}
+	@media (max-width: 420px) {
+		.section-heading {
+			align-items: flex-start;
+			flex-direction: column;
+			gap: 12px;
+		}
+		.prompt {
+			padding-left: 12px;
+		}
+		.install-command input {
+			padding: 18px 10px;
+		}
+		dl > div {
+			grid-template-columns: 90px minmax(0, 1fr);
+			gap: 20px;
+		}
+	}
+</style>

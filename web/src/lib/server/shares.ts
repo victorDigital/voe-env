@@ -68,9 +68,9 @@ export async function deleteShareByPath(
 	return result.length > 0;
 }
 
-export async function getIncomingShares(userId: string): Promise<
-	Array<FolderShare & { owner: { email: string; name: string } }>
-> {
+export async function getIncomingShares(
+	userId: string
+): Promise<Array<FolderShare & { owner: { email: string; name: string } }>> {
 	const now = new Date();
 
 	const shares = await db
@@ -84,10 +84,7 @@ export async function getIncomingShares(userId: string): Promise<
 		.where(
 			and(
 				eq(folderShares.sharedWithId, userId),
-				or(
-					isNull(folderShares.expiresAt),
-					gt(folderShares.expiresAt, now)
-				)
+				or(isNull(folderShares.expiresAt), gt(folderShares.expiresAt, now))
 			)
 		);
 
@@ -100,9 +97,9 @@ export async function getIncomingShares(userId: string): Promise<
 	}));
 }
 
-export async function getOutgoingShares(userId: string): Promise<
-	Array<FolderShare & { sharedWith: { email: string; name: string } }>
-> {
+export async function getOutgoingShares(
+	userId: string
+): Promise<Array<FolderShare & { sharedWith: { email: string; name: string } }>> {
 	const shares = await db
 		.select({
 			share: folderShares,
@@ -185,10 +182,7 @@ export async function hasShareAccess(
 					// e.g., share is "org:product" and user requests "org:product:dev"
 					sql`${folderPath} LIKE ${folderShares.folderPath} || ':%'`
 				),
-				or(
-					isNull(folderShares.expiresAt),
-					gt(folderShares.expiresAt, now)
-				)
+				or(isNull(folderShares.expiresAt), gt(folderShares.expiresAt, now))
 			)
 		)
 		.limit(1);
@@ -208,7 +202,9 @@ export async function hasShareAccess(
 	};
 }
 
-export async function getUserByEmail(email: string): Promise<{ id: string; email: string; name: string; publicKey: string | null } | null> {
+export async function getUserByEmail(
+	email: string
+): Promise<{ id: string; email: string; name: string; publicKey: string | null } | null> {
 	const [userRecord] = await db
 		.select({
 			id: user.id,
@@ -236,11 +232,7 @@ export async function getUserPublicKey(userId: string): Promise<string | null> {
 }
 
 export async function setUserPublicKey(userId: string, publicKey: string): Promise<boolean> {
-	const result = await db
-		.update(user)
-		.set({ publicKey })
-		.where(eq(user.id, userId))
-		.returning();
+	const result = await db.update(user).set({ publicKey }).where(eq(user.id, userId)).returning();
 
 	return result.length > 0;
 }

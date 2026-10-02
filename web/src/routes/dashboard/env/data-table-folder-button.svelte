@@ -1,8 +1,6 @@
 <script lang="ts">
-	import Folder from '@lucide/svelte/icons/folder';
-	import Users from '@lucide/svelte/icons/users';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import Badge from '$lib/components/ui/badge/badge.svelte';
+	import Folder from 'remixicon-svelte/icons/folder-line';
+	import Users from 'remixicon-svelte/icons/group-line';
 
 	let {
 		name,
@@ -19,19 +17,25 @@
 	} = $props();
 </script>
 
-<Button variant="link" size="sm" onclick={onNavigate} class="h-auto gap-1 p-0">
+<button
+	type="button"
+	onclick={onNavigate}
+	aria-label="Open folder {name}"
+	class="flex max-w-full items-start gap-2.5 text-left transition-colors hover:text-muted-foreground"
+>
 	{#if isShared}
-		<Users class="h-4 w-4 text-muted-foreground" />
+		<Users class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 	{:else}
-		<Folder class="h-4 w-4 text-muted-foreground" />
+		<Folder class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 	{/if}
-	<span>{name}</span>
-	{#if isShared}
-		<Badge variant="secondary" class="ml-1 text-xs">
-			Shared by {sharedBy?.name || sharedBy?.email}
-		</Badge>
-		{#if permission === 'read'}
-			<Badge variant="outline" class="ml-1 text-xs">Read Only</Badge>
+	<span class="min-w-0">
+		<span class="block text-xs font-medium break-all sm:text-sm">{name}</span>
+		{#if isShared}
+			<span
+				class="mt-1 block truncate text-[11px] text-muted-foreground"
+				title="Shared by {sharedBy?.name || sharedBy?.email}"
+				>{permission === 'read' ? 'View only' : 'Shared folder'}</span
+			>
 		{/if}
-	{/if}
-</Button>
+	</span>
+</button>

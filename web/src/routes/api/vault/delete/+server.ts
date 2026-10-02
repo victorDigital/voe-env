@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { deleteEnv, deleteSharedEnv, getVaultEnv } from '$lib/server/env-vault';
-import { hasShareAccess } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { deleteEnv, deleteSharedEnv, getVaultEnv } from '#lib/server/env-vault.ts';
+import { hasShareAccess } from '#lib/server/shares.ts';
 import type { RequestHandler } from './$types';
 
 export const DELETE: RequestHandler = async ({ request }) => {
@@ -44,8 +44,7 @@ export const DELETE: RequestHandler = async ({ request }) => {
 				if (readAccess.hasAccess) {
 					return json(
 						{
-							error:
-								'This folder is shared with read-only access. You cannot delete from it.'
+							error: 'This folder is shared with read-only access. You cannot delete from it.'
 						},
 						{ status: 403 }
 					);
@@ -57,11 +56,10 @@ export const DELETE: RequestHandler = async ({ request }) => {
 			}
 
 			// Has write access - get the owner ID
-			const { getIncomingShares } = await import('$lib/server/shares');
+			const { getIncomingShares } = await import('#lib/server/shares.ts');
 			const shares = await getIncomingShares(userId);
 			const matchingShare = shares.find(
-				(share) =>
-					share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
+				(share) => share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
 			);
 
 			if (!matchingShare) {

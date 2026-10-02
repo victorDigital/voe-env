@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { getAllEnv } from '$lib/server/env-vault';
-import { getIncomingShares } from '$lib/server/shares';
-import { getSharedVaultEnv } from '$lib/server/env-vault';
+import { auth } from '#lib/server/auth.ts';
+import { getAllEnv } from '#lib/server/env-vault.ts';
+import { getIncomingShares } from '#lib/server/shares.ts';
+import { getSharedVaultEnv } from '#lib/server/env-vault.ts';
 import type { RequestHandler } from './$types';
 
 interface TreeNode {

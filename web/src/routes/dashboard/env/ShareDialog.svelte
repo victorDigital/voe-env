@@ -1,12 +1,15 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import * as Select from '$lib/components/ui/select/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
-	import { encryptWithPublicKey } from '$lib/crypto';
+	import { Button } from '#lib/components/ui/button/index.ts';
+	import { Input } from '#lib/components/ui/input/index.ts';
+	import * as Dialog from '#lib/components/ui/dialog/index.ts';
+	import { Label } from '#lib/components/ui/label/index.ts';
+	import { encryptWithPublicKey } from '#lib/crypto.ts';
 
-	let { open = $bindable(false), folderPath, vaultPassword }: { open: boolean; folderPath: string; vaultPassword: string } = $props();
+	let {
+		open = $bindable(false),
+		folderPath,
+		vaultPassword
+	}: { open: boolean; folderPath: string; vaultPassword: string } = $props();
 
 	let recipientEmail = $state('');
 	let permission = $state<'read' | 'readwrite'>('read');
@@ -14,67 +17,58 @@
 	let error = $state('');
 	let success = $state('');
 
-	const permissions = [
-		{ value: 'read', label: 'Read Only', description: 'Can view and decrypt values' },
-		{ value: 'readwrite', label: 'Read & Write', description: 'Can view, modify, and delete values' }
-	];
+	$effect(() => {
+		if (!open) {
+			error = '';
+			success = '';
+		}
+	});
 
-	async function handleSubmit() {
+	async function handleSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		if (isSubmitting) return;
 		error = '';
 		success = '';
 
-		if (!recipientEmail) {
-			error = 'Please enter an email address';
+		if (!recipientEmail.trim()) {
+			error = 'Enter an email address.';
 			return;
 		}
-
 		if (!vaultPassword) {
-			error = 'Vault must be unlocked to share';
+			error = 'Unlock the folder before sharing it.';
 			return;
 		}
 
 		isSubmitting = true;
-
 		try {
-			// First, get the recipient's public key
-			const keyResponse = await fetch(`/api/keys?email=${encodeURIComponent(recipientEmail)}`);
+			const email = recipientEmail.trim();
+			const keyResponse = await fetch(`/api/keys?email=${encodeURIComponent(email)}`);
 			const keyResult = await keyResponse.json();
-
 			if (!keyResponse.ok) {
-				error = keyResult.error || 'Failed to get recipient public key';
-				isSubmitting = false;
+				error = keyResult.error || 'Could not find this person’s encryption key.';
 				return;
 			}
 
-			// Encrypt the vault password with recipient's public key
 			const encryptedVaultPassword = await encryptWithPublicKey(vaultPassword, keyResult.publicKey);
-
-			// Create the share with encrypted vault password
 			const response = await fetch('/api/shares', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					folderPath,
-					recipientEmail,
+					recipientEmail: email,
 					permission,
 					encryptedVaultPassword
 				})
 			});
-
 			const result = await response.json();
-
 			if (!response.ok) {
-				error = result.error || 'Failed to share folder';
+				error = result.error || 'Could not share this folder. Try again.';
 			} else {
-				success = result.message;
+				success = `Shared with ${email}.`;
 				recipientEmail = '';
-				setTimeout(() => {
-					open = false;
-					success = '';
-				}, 2000);
 			}
-		} catch (err: any) {
-			error = err.message || 'Failed to share folder';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Could not share this folder. Try again.';
 		} finally {
 			isSubmitting = false;
 		}
@@ -82,63 +76,83 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-[425px]">
+	<Dialog.Content class="sm:max-w-md">
 		<Dialog.Header>
-			<Dialog.Title>Share Folder</Dialog.Title>
-			<Dialog.Description>
-				Share "{folderPath}" with another user. They will receive access to view and decrypt all values in this folder.
-			</Dialog.Description>
+			<Dialog.Title>Share folder</Dialog.Title>
+			<Dialog.Description
+				>Give someone access to <span class="font-mono break-all text-foreground">{folderPath}</span
+				>. They’ll need a VOE account.</Dialog.Description
+			>
 		</Dialog.Header>
 
-		<form onsubmit={handleSubmit} class="grid gap-4 py-4">
+		<form id="share-folder-form" onsubmit={handleSubmit} class="grid gap-5 py-3">
 			<div class="grid gap-2">
-				<Label for="email">Recipient Email</Label>
+				<Label for="share-email" class="text-xs">Email address</Label>
 				<Input
-					id="email"
+					id="share-email"
 					type="email"
-					placeholder="colleague@example.com"
+					autocomplete="email"
+					placeholder="you@example.com"
 					bind:value={recipientEmail}
 					disabled={isSubmitting}
+					required
+					aria-invalid={!!error}
+					aria-describedby={error ? 'share-error' : undefined}
 				/>
 			</div>
-
-			<div class="grid gap-2">
-				<Label for="permission">Permission</Label>
-				<Select.Root type="single" bind:value={permission} disabled={isSubmitting}>
-					<Select.Trigger class="w-full">
-						{permissions.find((p) => p.value === permission)?.label}
-					</Select.Trigger>
-					<Select.Content>
-						{#each permissions as perm}
-							<Select.Item value={perm.value}>
-								<div class="flex flex-col">
-									<span>{perm.label}</span>
-									<span class="text-xs text-muted-foreground">{perm.description}</span>
-								</div>
-							</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
-			</div>
-
-			{#if error}
-				<p class="text-sm text-red-500">{error}</p>
-			{/if}
-
-			{#if success}
-				<p class="text-sm text-green-500">{success}</p>
-			{/if}
+			<fieldset disabled={isSubmitting}>
+				<legend class="mb-2 text-xs font-medium">Access</legend>
+				<div class="grid grid-cols-2 gap-2">
+					<label
+						class="cursor-pointer border p-3 transition-colors {permission === 'read'
+							? 'border-foreground/50 bg-muted/40'
+							: 'border-border'}"
+					>
+						<span class="flex items-center gap-2 text-sm"
+							><input
+								type="radio"
+								name="permission"
+								value="read"
+								bind:group={permission}
+								class="size-3.5 shrink-0 appearance-none border border-input checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+							/>Can view</span
+						>
+						<span class="mt-1.5 block pl-5 text-xs text-muted-foreground">Read and decrypt</span>
+					</label>
+					<label
+						class="cursor-pointer border p-3 transition-colors {permission === 'readwrite'
+							? 'border-foreground/50 bg-muted/40'
+							: 'border-border'}"
+					>
+						<span class="flex items-center gap-2 text-sm"
+							><input
+								type="radio"
+								name="permission"
+								value="readwrite"
+								bind:group={permission}
+								class="size-3.5 shrink-0 appearance-none border border-input checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+							/>Can edit</span
+						>
+						<span class="mt-1.5 block pl-5 text-xs text-muted-foreground"
+							>Read, change and delete</span
+						>
+					</label>
+				</div>
+			</fieldset>
+			{#if error}<p id="share-error" role="alert" class="text-xs text-destructive">{error}</p>{/if}
+			{#if success}<p role="status" class="text-sm break-all text-foreground">{success}</p>{/if}
 		</form>
 
-	<Dialog.Footer>
-		<Button variant="outline" onclick={() => (open = false)} disabled={isSubmitting}>Cancel</Button>
-		<Button disabled={isSubmitting || !recipientEmail} onclick={handleSubmit}>
-			{#if isSubmitting}
-				Sharing...
-			{:else}
-				Share Folder
-			{/if}
-		</Button>
-	</Dialog.Footer>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (open = false)} disabled={isSubmitting}
+				>{success ? 'Done' : 'Cancel'}</Button
+			>
+			<Button
+				type="submit"
+				form="share-folder-form"
+				disabled={isSubmitting || !recipientEmail.trim()}
+				>{isSubmitting ? 'Sharing…' : 'Share folder'}</Button
+			>
+		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

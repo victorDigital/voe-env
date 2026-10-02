@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
-	import CheckIcon from "@lucide/svelte/icons/check";
-	import MinusIcon from "@lucide/svelte/icons/minus";
-	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";
-	import type { Snippet } from "svelte";
+	import { DropdownMenu as DropdownMenuPrimitive } from 'bits-ui';
+	import RiSubtractLine from 'remixicon-svelte/icons/subtract-line';
+	import RiCheckLine from 'remixicon-svelte/icons/check-line';
+	import { cn, type WithoutChildrenOrChild } from '#lib/utils.ts';
+	import type { Snippet } from 'svelte';
 
 	let {
 		ref = $bindable(null),
@@ -11,6 +11,7 @@
 		indeterminate = $bindable(false),
 		class: className,
 		children: childrenProp,
+		closeOnSelect = false,
 		...restProps
 	}: WithoutChildrenOrChild<DropdownMenuPrimitive.CheckboxItemProps> & {
 		children?: Snippet;
@@ -19,23 +20,25 @@
 
 <DropdownMenuPrimitive.CheckboxItem
 	bind:ref
+	{closeOnSelect}
 	bind:checked
 	bind:indeterminate
 	data-slot="dropdown-menu-checkbox-item"
 	class={cn(
-		"focus:bg-accent focus:text-accent-foreground relative flex cursor-default items-center gap-2 rounded-sm py-1.5 ps-8 pe-2 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+		"relative flex cursor-default items-center gap-2 rounded-none py-2 pr-8 pl-2 text-xs outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground data-inset:pl-7 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 		className
 	)}
 	{...restProps}
 >
 	{#snippet children({ checked, indeterminate })}
 		<span
-			class="pointer-events-none absolute start-2 flex size-3.5 items-center justify-center"
+			class="pointer-events-none absolute right-2 flex items-center justify-center"
+			data-slot="dropdown-menu-checkbox-item-indicator"
 		>
 			{#if indeterminate}
-				<MinusIcon class="size-4" />
-			{:else}
-				<CheckIcon class={cn("size-4", !checked && "text-transparent")} />
+				<RiSubtractLine />
+			{:else if checked}
+				<RiCheckLine />
 			{/if}
 		</span>
 		{@render childrenProp?.()}

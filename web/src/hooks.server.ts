@@ -1,10 +1,9 @@
-import { auth } from '$lib/server/auth';
+import { auth } from '#lib/server/auth.ts';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
-import { building } from '$app/environment';
-import type { Handle } from '@sveltejs/kit';
-import type { ServerInit } from '@sveltejs/kit';
+import { building } from '$app/env';
+import type { Handle, ServerInit } from '@sveltejs/kit/hooks';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import { db } from '$lib/server/db';
+import { db } from '#lib/server/db/index.ts';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = await auth.api.getSession({

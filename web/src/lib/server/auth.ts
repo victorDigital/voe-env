@@ -4,43 +4,45 @@ import { db } from './db';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
 import { deviceAuthorization, bearer } from 'better-auth/plugins';
-import { createAuthMiddleware } from 'better-auth/plugins';
+import { createAuthMiddleware, isAPIError } from 'better-auth/api';
 import { deviceLog, deviceCode } from './db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import type { BetterAuthPlugin } from 'better-auth';
-import { env } from '$env/dynamic/private';
-import { building } from '$app/environment';
+import { BETTER_AUTH_URL, BETTER_AUTH_SECRET } from '$app/env/private';
+import { building } from '$app/env';
 
 const deviceLogPlugin = (): BetterAuthPlugin => ({
 	id: 'device-log',
 	hooks: {
 		after: [
 			{
-				matcher: (context) => context.path === '/api/auth/device/approve',
+				matcher: (context) =>
+					context.path === '/device/approve' && !isAPIError(context.context.returned),
 				handler: createAuthMiddleware(async (ctx) => {
-					const userCode = (ctx as any).body?.userCode;
-					if (userCode) {
-						const deviceCodeEntry = await db
-							.select()
-							.from(deviceCode)
-							.where(eq(deviceCode.userCode, userCode))
-							.limit(1);
-						if (deviceCodeEntry.length > 0) {
-							const { userId, clientId, scope } = deviceCodeEntry[0];
-							const insertData: any = {
-								id: crypto.randomUUID(),
-								userId,
-								clientId: clientId || 'voe-cli',
-								userCode,
-								approvedAt: new Date().toISOString()
-							};
-							if (scope) {
-								insertData.scope = scope;
-							}
-							await db.insert(deviceLog).values(insertData);
-						}
-					}
-					return ctx;
+					const userCode = ctx.body?.userCode;
+					if (typeof userCode !== 'string') return;
+
+					const normalizedCode = userCode.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+					const [approvedDevice] = await db
+						.select()
+						.from(deviceCode)
+						.where(
+							and(
+								eq(deviceCode.status, 'approved'),
+								or(eq(deviceCode.userCode, userCode), eq(deviceCode.userCode, normalizedCode))
+							)
+						)
+						.limit(1);
+					if (!approvedDevice?.userId) return;
+
+					await db.insert(deviceLog).values({
+						id: crypto.randomUUID(),
+						userId: approvedDevice.userId,
+						clientId: approvedDevice.clientId || 'voe-cli',
+						userCode: approvedDevice.userCode,
+						scope: approvedDevice.scope,
+						approvedAt: new Date()
+					});
 				})
 			}
 		]
@@ -51,8 +53,8 @@ export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: 'pg'
 	}),
-	baseURL: env.BETTER_AUTH_URL || undefined,
-	secret: building ? crypto.randomUUID() : env.BETTER_AUTH_SECRET,
+	baseURL: BETTER_AUTH_URL || undefined,
+	secret: building ? crypto.randomUUID() : BETTER_AUTH_SECRET,
 	emailAndPassword: {
 		enabled: true
 	},

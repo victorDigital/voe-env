@@ -29,25 +29,17 @@ export async function generateKeyPair(): Promise<{ publicKey: string; privateKey
 // Import public key from base64 string
 export async function importPublicKey(publicKeyBase64: string): Promise<CryptoKey> {
 	const keyData = Uint8Array.from(atob(publicKeyBase64), (c) => c.charCodeAt(0));
-	return crypto.subtle.importKey(
-		'spki',
-		keyData,
-		{ name: 'RSA-OAEP', hash: 'SHA-256' },
-		false,
-		['encrypt']
-	);
+	return crypto.subtle.importKey('spki', keyData, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, [
+		'encrypt'
+	]);
 }
 
 // Import private key from base64 string
 export async function importPrivateKey(privateKeyBase64: string): Promise<CryptoKey> {
 	const keyData = Uint8Array.from(atob(privateKeyBase64), (c) => c.charCodeAt(0));
-	return crypto.subtle.importKey(
-		'pkcs8',
-		keyData,
-		{ name: 'RSA-OAEP', hash: 'SHA-256' },
-		false,
-		['decrypt']
-	);
+	return crypto.subtle.importKey('pkcs8', keyData, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, [
+		'decrypt'
+	]);
 }
 
 // Encrypt data with recipient's public key (for sharing vault password)
@@ -62,14 +54,13 @@ export async function encryptWithPublicKey(data: string, publicKeyBase64: string
 }
 
 // Decrypt data with own private key (for receiving shared vault password)
-export async function decryptWithPrivateKey(encryptedBase64: string, privateKeyBase64: string): Promise<string> {
+export async function decryptWithPrivateKey(
+	encryptedBase64: string,
+	privateKeyBase64: string
+): Promise<string> {
 	const privateKey = await importPrivateKey(privateKeyBase64);
 	const encryptedData = Uint8Array.from(atob(encryptedBase64), (c) => c.charCodeAt(0));
-	const decrypted = await crypto.subtle.decrypt(
-		{ name: 'RSA-OAEP' },
-		privateKey,
-		encryptedData
-	);
+	const decrypted = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, encryptedData);
 	return new TextDecoder().decode(decrypted);
 }
 

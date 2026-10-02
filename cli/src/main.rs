@@ -1,12 +1,11 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore},
-    Aes256Gcm, KeyInit,
+    aead::{Aead, Generate},
+    Aes256Gcm, KeyInit, Nonce,
 };
 use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, Subcommand};
 use pbkdf2::pbkdf2_hmac;
-use rand::rngs::OsRng;
-use reqwest::{get, Client};
+use reqwest::Client;
 use rpassword;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -511,7 +510,7 @@ fn encrypt_value(text: &str, password: &str) -> Result<String, Box<dyn std::erro
     let key_bytes = derive_key(password)?;
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)
         .map_err(|e| format!("Failed to create cipher: {}", e))?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Nonce::generate();
     let ciphertext = cipher
         .encrypt(&nonce, text.as_bytes())
         .map_err(|e| format!("Encryption failed: {}", e))?;
@@ -534,7 +533,7 @@ fn decrypt_value(
     let nonce = &combined[..12];
     let ciphertext = &combined[12..];
     let plaintext = cipher
-        .decrypt(nonce.into(), ciphertext)
+        .decrypt(nonce.try_into()?, ciphertext)
         .map_err(|e| format!("Decryption failed: {}", e))?;
     String::from_utf8(plaintext)
         .map_err(|e| format!("Invalid UTF-8 in decrypted data: {}", e).into())
@@ -1604,5 +1603,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Unshare { folder_path, recipient_email } => {
             cmd_unshare(folder_path.clone(), recipient_email.clone()).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LEGACY_CIPHERTEXT: &str =
+        "AAECAwQFBgcICQoLSkEj8pBQ+U8UTnp9i1JY8Da0DYax5gxQr+1X95nyxvFkTZcssOTm+A==";
+    const LEGACY_PASSWORD: &str = "compatibility password";
+    const LEGACY_PLAINTEXT: &str = "legacy vault secret 🔐";
+
+    #[test]
+    fn decrypts_existing_webcrypto_vault_values() {
+        assert_eq!(
+            decrypt_value(LEGACY_CIPHERTEXT, LEGACY_PASSWORD).unwrap(),
+            LEGACY_PLAINTEXT
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_vault_values() {
+        assert!(decrypt_value(LEGACY_CIPHERTEXT, "wrong password").is_err());
+        assert!(decrypt_value("AAECAwQ=", LEGACY_PASSWORD).is_err());
+        let mut ciphertext = general_purpose::STANDARD.decode(LEGACY_CIPHERTEXT).unwrap();
+        ciphertext[12] ^= 1;
+        assert!(decrypt_value(
+            &general_purpose::STANDARD.encode(ciphertext),
+            LEGACY_PASSWORD
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn encrypts_vault_values_with_unique_nonces() {
+        let first = encrypt_value(LEGACY_PLAINTEXT, LEGACY_PASSWORD).unwrap();
+        let second = encrypt_value(LEGACY_PLAINTEXT, LEGACY_PASSWORD).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            decrypt_value(&first, LEGACY_PASSWORD).unwrap(),
+            LEGACY_PLAINTEXT
+        );
+        assert_eq!(
+            decrypt_value(&second, LEGACY_PASSWORD).unwrap(),
+            LEGACY_PLAINTEXT
+        );
     }
 }

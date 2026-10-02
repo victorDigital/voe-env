@@ -1,7 +1,6 @@
 <script lang="ts">
-	import Lock from '@lucide/svelte/icons/lock';
-	import LockOpen from '@lucide/svelte/icons/lock-open';
-	import Spinner from '$lib/components/ui/spinner/spinner.svelte';
+	import Lock from 'remixicon-svelte/icons/lock-line';
+	import Spinner from '#lib/components/ui/spinner/spinner.svelte';
 
 	let {
 		name,
@@ -14,13 +13,11 @@
 	} = $props();
 </script>
 
-<div class="flex items-center gap-1">
+<div class="flex min-w-0 items-center gap-2.5">
 	{#if isUnlocking}
-		<Spinner class="h-4 w-4 text-muted-foreground" />
-	{:else if isDecrypted}
-		<LockOpen class="h-4 w-4 text-muted-foreground" />
-	{:else}
-		<Lock class="h-4 w-4 text-muted-foreground" />
+		<Spinner class="size-3.5 shrink-0 text-muted-foreground" />
+	{:else if !isDecrypted}
+		<Lock class="hidden size-3.5 shrink-0 text-muted-foreground/70 sm:block" aria-hidden="true" />
 	{/if}
-	<span>{name}</span>
+	<span class="min-w-0 font-mono text-xs break-all sm:text-[13px]">{name}</span>
 </div>

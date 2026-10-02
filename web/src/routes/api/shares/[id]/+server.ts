@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { deleteShare } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { deleteShare } from '#lib/server/shares.ts';
 import type { RequestHandler } from './$types';
 
 export const DELETE: RequestHandler = async ({ request, params }) => {

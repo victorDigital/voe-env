@@ -80,6 +80,7 @@ jobs:
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           cargo build --manifest-path cli/Cargo.toml --locked --release --target "$CLI_TARGET"
+          cargo test --manifest-path cli/Cargo.toml --locked --target "$CLI_TARGET"
       - name: Verify and package
         run: |
           mkdir -p dist

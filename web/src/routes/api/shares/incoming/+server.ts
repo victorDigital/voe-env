@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { getIncomingShares } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { getIncomingShares } from '#lib/server/shares.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ request }) => {

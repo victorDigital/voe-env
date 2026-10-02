@@ -21,14 +21,15 @@ services:
     build:
       context: ./web
       args:
-        - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-http://localhost:3000}
+        - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
+        - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-}
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL}
+      - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-}
       - VOE_CLI_RELEASE_URL=${VOE_CLI_RELEASE_URL:-https://github.com/victorDigital/voe-env/releases/latest/download}
     volumes:
       - db-data:/data

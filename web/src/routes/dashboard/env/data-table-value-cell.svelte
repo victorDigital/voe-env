@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import Copy from '@lucide/svelte/icons/copy';
-	import Eye from '@lucide/svelte/icons/eye';
-	import EyeOff from '@lucide/svelte/icons/eye-off';
+	import { Button } from '#lib/components/ui/button/index.ts';
+	import Copy from 'remixicon-svelte/icons/file-copy-line';
+	import Check from 'remixicon-svelte/icons/check-line';
+	import Eye from 'remixicon-svelte/icons/eye-line';
+	import EyeOff from 'remixicon-svelte/icons/eye-off-line';
 
 	let {
 		type,
 		name,
 		value,
-		encrypted,
 		isDecrypted,
 		showAllValues,
 		onRequestUnlock
@@ -22,131 +22,80 @@
 		onRequestUnlock?: () => void;
 	} = $props();
 
-	let isHovered = $state(false);
-	let localShowValue = $state(false);
-	let showValue = $derived(isDecrypted && showAllValues ? true : localShowValue);
+	let localShowValue = $state<boolean | null>(null);
+	let copied = $state(false);
+	let copyError = $state('');
+	let showValue = $derived(isDecrypted && (localShowValue ?? showAllValues));
 
-	function b64ByteLength(b64: string): number {
-		let len = b64.length;
-		let padding = 0;
-		if (b64.endsWith('==')) padding = 2;
-		else if (b64.endsWith('=')) padding = 1;
-		return (len * 3) / 4 - padding;
-	}
-
-	function estimateLength(encrypted: string): number {
-		if (typeof encrypted !== 'string' || !encrypted) return 0;
-		try {
-			const combinedLength = b64ByteLength(encrypted);
-			const dataLength = combinedLength - 12;
-			const plaintextLength = dataLength - 16;
-			return Math.max(0, plaintextLength);
-		} catch {
-			return 0;
-		}
-	}
-
-	function getLockedString(length: number): string {
-		return '•'.repeat(Math.min(length, 60));
-	}
+	$effect(() => {
+		showAllValues;
+		isDecrypted;
+		localShowValue = null;
+	});
 
 	async function handleCopy() {
-		if (!value) return;
+		if (value === undefined) return;
+		copyError = '';
 		try {
 			await navigator.clipboard.writeText(value);
-			console.log('Copied to clipboard');
-		} catch (err) {
-			console.error('Failed to copy:', err);
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			copyError = 'Could not copy. Reveal the value to select it.';
 		}
 	}
 
 	function handleToggleVisibility() {
-		if (!isDecrypted && encrypted) {
-			// Need password - bubble up event to page
+		if (!isDecrypted) {
 			onRequestUnlock?.();
 			return;
 		}
-		localShowValue = !localShowValue;
-	}
-
-	function handleMouseEnter() {
-		isHovered = true;
-	}
-
-	function handleMouseLeave() {
-		isHovered = false;
-	}
-
-	function truncate(str: string, maxLength = 60): string {
-		if (str.length <= maxLength) return str;
-		return str.slice(0, maxLength - 1) + '…';
+		localShowValue = !showValue;
 	}
 </script>
 
-<div
-	class="flex items-center justify-between gap-2"
-	role="group"
-	onmouseenter={handleMouseEnter}
-	onmouseleave={handleMouseLeave}
->
-	<div class="min-w-0 flex-1 overflow-hidden">
-		{#if type === 'folder'}
-			<span class="text-muted-foreground">—</span>
-		{:else}
-			<span
-				class="block truncate font-mono text-sm text-muted-foreground"
-				title={isDecrypted && showValue ? value : undefined}
+{#if type === 'folder'}
+	<span class="text-xs text-muted-foreground/60">—</span>
+{:else}
+	<div
+		class="flex min-w-0 gap-1 {showValue
+			? 'flex-col items-start sm:flex-row sm:items-center'
+			: 'items-center justify-between'}"
+		role="group"
+		aria-label="Value for {name}"
+	>
+		<span
+			class="min-w-0 font-mono text-xs {showValue
+				? 'break-all whitespace-pre-wrap text-foreground sm:flex-1'
+				: 'truncate text-muted-foreground'}"
+		>
+			{showValue ? value || '(empty)' : '••••••••'}
+		</span>
+		<div class="flex shrink-0 items-center">
+			<Button
+				variant="ghost"
+				size="icon"
+				class="size-8 text-muted-foreground"
+				onclick={handleToggleVisibility}
+				aria-label={isDecrypted ? `${showValue ? 'Hide' : 'Reveal'} ${name}` : `Unlock ${name}`}
+				title={isDecrypted ? (showValue ? 'Hide value' : 'Reveal value') : 'Unlock to view'}
 			>
-				{#if isDecrypted && showValue}
-					{truncate(value || '')}
-				{:else if isDecrypted && !showValue}
-					{getLockedString(value?.length || 0)}
-				{:else}
-					{getLockedString(estimateLength(encrypted || ''))}
-				{/if}
-			</span>
-		{/if}
-	</div>
-
-	{#if type !== 'folder' && isHovered}
-		<div class="flex shrink-0 items-center gap-1">
+				{#if showValue}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
+			</Button>
 			{#if isDecrypted}
 				<Button
 					variant="ghost"
 					size="icon"
-					class="h-6 w-6"
-					onclick={handleToggleVisibility}
-					title={showValue ? 'Hide value' : 'Show value'}
-				>
-					{#if showValue}
-						<EyeOff class="h-3 w-3" />
-					{:else}
-						<Eye class="h-3 w-3" />
-					{/if}
-				</Button>
-			{:else}
-				<Button
-					variant="ghost"
-					size="icon"
-					class="h-6 w-6"
-					onclick={handleToggleVisibility}
-					title="Unlock to view"
-				>
-					<Eye class="h-3 w-3" />
-				</Button>
-			{/if}
-
-			{#if isDecrypted && value}
-				<Button
-					variant="ghost"
-					size="icon"
-					class="h-6 w-6"
+					class="size-8 text-muted-foreground"
 					onclick={handleCopy}
-					title="Copy to clipboard"
+					aria-label={copied ? `Copied ${name}` : `Copy ${name}`}
+					title={copied ? 'Copied' : 'Copy value'}
 				>
-					<Copy class="h-3 w-3" />
+					{#if copied}<Check class="size-3.5 text-primary" />{:else}<Copy class="size-3.5" />{/if}
 				</Button>
 			{/if}
 		</div>
-	{/if}
-</div>
+	</div>
+	<span class="sr-only" role="status">{copied ? 'Value copied.' : ''}</span>
+	{#if copyError}<p role="alert" class="mt-1 text-[11px] text-destructive">{copyError}</p>{/if}
+{/if}

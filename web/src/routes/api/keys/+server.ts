@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { getUserPublicKey, setUserPublicKey, getUserByEmail } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { getUserPublicKey, setUserPublicKey, getUserByEmail } from '#lib/server/shares.ts';
 import type { RequestHandler } from '@sveltejs/kit';
 
 // GET - Get current user's public key or another user's public key by email
@@ -15,7 +15,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 
 	try {
 		const email = url.searchParams.get('email');
-		
+
 		if (email) {
 			// Get another user's public key (for sharing)
 			const user = await getUserByEmail(email);

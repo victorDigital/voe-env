@@ -1,6 +1,13 @@
 import { redirect } from '@sveltejs/kit';
-import { listEnv, setEnv, getEnv, deleteEnv, getVaultEnv, getSharedVaultEnv } from '$lib/server/env-vault';
-import { hasShareAccess, getIncomingShares } from '$lib/server/shares';
+import {
+	listEnv,
+	setEnv,
+	getEnv,
+	deleteEnv,
+	getVaultEnv,
+	getSharedVaultEnv
+} from '#lib/server/env-vault.ts';
+import { hasShareAccess, getIncomingShares } from '#lib/server/shares.ts';
 
 type EnvItem = {
 	name: string;
@@ -11,9 +18,8 @@ type EnvItem = {
 };
 
 export const load = async ({ locals, url }: any) => {
-	// Ensure user is authenticated
 	if (!locals.user || !locals.session) {
-		throw redirect(302, '/');
+		redirect(303, `/login?redirectTo=${encodeURIComponent(url.pathname + url.search)}`);
 	}
 
 	const userId = locals.user.id;
@@ -79,7 +85,7 @@ export const load = async ({ locals, url }: any) => {
 	const sharesAtThisLevel = allShares.filter((share) => {
 		const shareParts = share.folderPath.split(':');
 		const pathParts = path ? path.split(':') : [];
-		
+
 		if (path === '') {
 			// At root level, show shares whose first segment should appear
 			return shareParts.length >= 1;
@@ -109,7 +115,7 @@ export const load = async ({ locals, url }: any) => {
 	for (const share of sharesAtThisLevel) {
 		const shareParts = share.folderPath.split(':');
 		const pathParts = path ? path.split(':') : [];
-		
+
 		// Get the name of the folder at the current level
 		const folderName = shareParts[pathParts.length];
 		if (!folderName) continue;
@@ -151,7 +157,7 @@ export const load = async ({ locals, url }: any) => {
 
 export const actions: any = {
 	set: async ({ request, locals }: any) => {
-		if (!locals.user) throw redirect(302, '/');
+		if (!locals.user) redirect(303, '/login');
 
 		const data = await request.formData();
 		const key = data.get('key') as string;
@@ -211,7 +217,7 @@ export const actions: any = {
 	},
 
 	get: async ({ request, locals }: any) => {
-		if (!locals.user) throw redirect(302, '/');
+		if (!locals.user) redirect(303, '/login');
 
 		const data = await request.formData();
 		const fullKey = data.get('fullKey') as string;
@@ -238,7 +244,7 @@ export const actions: any = {
 
 					if (matchingShare) {
 						// Get from owner's vault - we need to query by ownerId and fullKey
-						const { getSharedVaultEnv } = await import('$lib/server/env-vault');
+						const { getSharedVaultEnv } = await import('#lib/server/env-vault.ts');
 						const sharedEnvs = await getSharedVaultEnv(matchingShare.ownerId, path);
 						const keyName = fullKey.split(':').pop() || fullKey;
 						encryptedValue = sharedEnvs[keyName] || null;
@@ -253,7 +259,7 @@ export const actions: any = {
 	},
 
 	delete: async ({ request, locals }: any) => {
-		if (!locals.user) throw redirect(302, '/');
+		if (!locals.user) redirect(303, '/login');
 
 		const data = await request.formData();
 		const fullKey = data.get('fullKey') as string;

@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
+import { auth } from '#lib/server/auth.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ request }) => {

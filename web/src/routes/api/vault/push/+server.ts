@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
-import { auth } from '$lib/server/auth';
-import { setEnv, setSharedEnv, getVaultEnv } from '$lib/server/env-vault';
-import { hasShareAccess } from '$lib/server/shares';
+import { auth } from '#lib/server/auth.ts';
+import { setEnv, setSharedEnv, getVaultEnv } from '#lib/server/env-vault.ts';
+import { hasShareAccess } from '#lib/server/shares.ts';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -41,11 +41,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
 			if (shareAccess.hasAccess) {
 				// Has write access to a shared folder - get the owner ID
-				const { getIncomingShares } = await import('$lib/server/shares');
+				const { getIncomingShares } = await import('#lib/server/shares.ts');
 				const shares = await getIncomingShares(userId);
 				const matchingShare = shares.find(
-					(share) =>
-						share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
+					(share) => share.folderPath === vaultPath || vaultPath.startsWith(share.folderPath + ':')
 				);
 
 				if (matchingShare) {
@@ -58,8 +57,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				if (readAccess.hasAccess) {
 					return json(
 						{
-							error:
-								'This folder is shared with read-only access. You cannot modify it.'
+							error: 'This folder is shared with read-only access. You cannot modify it.'
 						},
 						{ status: 403 }
 					);
