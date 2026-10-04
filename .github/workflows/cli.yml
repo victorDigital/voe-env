@@ -51,6 +51,7 @@ jobs:
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
       CC_x86_64_unknown_linux_musl: musl-gcc
       CC_aarch64_unknown_linux_musl: musl-gcc
+      CFLAGS_aarch64_unknown_linux_musl: -mno-outline-atomics
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       CLI_TARGET: ${{ matrix.target }}
       CLI_ASSET: ${{ matrix.asset }}
