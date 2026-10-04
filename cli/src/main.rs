@@ -51,7 +51,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    #[command(about = "List folders and secret names in the selected organization")]
+    #[command(about = "Show folders and secret names in a tree")]
     List,
     #[command(about = "Compare local and remote values without printing them")]
     Diff,
@@ -609,6 +609,64 @@ async fn pull(force: bool) -> Result<()> {
     );
     Ok(())
 }
+fn workspace_tree(folders: &[Folder], secrets: &[Secret]) -> Result<String> {
+    enum Pending<'a> {
+        Folder(&'a str, String),
+        Line(String),
+    }
+    let root = folders
+        .iter()
+        .find(|folder| folder.parent_id.is_none())
+        .ok_or("Workspace root folder not found")?;
+    let mut children: BTreeMap<&str, Vec<(&str, Option<&str>)>> = BTreeMap::new();
+    for folder in folders {
+        path(folders, &folder.id)?;
+        if let Some(parent) = folder.parent_id.as_deref() {
+            children
+                .entry(parent)
+                .or_default()
+                .push((&folder.name, Some(&folder.id)));
+        }
+    }
+    for secret in secrets {
+        children
+            .entry(&secret.folder_id)
+            .or_default()
+            .push((&secret.name, None));
+    }
+    for entries in children.values_mut() {
+        entries.sort_by_key(|(name, folder)| (folder.is_none(), *name));
+    }
+    let mut output = format!("📂 Workspace ({} secrets):\n\n", secrets.len());
+    let mut pending = vec![Pending::Folder(&root.id, String::new())];
+    while let Some(item) = pending.pop() {
+        let (folder_id, prefix) = match item {
+            Pending::Folder(id, prefix) => (id, prefix),
+            Pending::Line(line) => {
+                output.push_str(&line);
+                continue;
+            }
+        };
+        let Some(entries) = children.get(folder_id) else {
+            continue;
+        };
+        for (index, (name, child_id)) in entries.iter().enumerate().rev() {
+            let last = index + 1 == entries.len();
+            let connector = if last { "└── " } else { "├── " };
+            let icon = if child_id.is_some() { "📁" } else { "🔑" };
+            let line = format!("{prefix}{connector}{icon} {name}\n");
+            if let Some(child_id) = child_id {
+                let child_prefix = format!("{prefix}{}", if last { "    " } else { "│   " });
+                pending.push(Pending::Folder(child_id, child_prefix));
+            }
+            pending.push(Pending::Line(line));
+        }
+    }
+    if !children.contains_key(root.id.as_str()) {
+        output.push_str("No folders or secrets yet.\n");
+    }
+    Ok(output)
+}
 async fn inspect(command: &Commands) -> Result<()> {
     let project = project()?;
     let credentials = credentials(&project.server)?;
@@ -632,16 +690,7 @@ async fn inspect(command: &Commands) -> Result<()> {
             }
         }
         Commands::List => {
-            for folder in &snapshot.folders {
-                println!("{}/", path(&snapshot.folders, &folder.id)?);
-            }
-            for secret in &snapshot.secrets {
-                println!(
-                    "{}:{}",
-                    path(&snapshot.folders, &secret.folder_id)?,
-                    secret.name
-                );
-            }
+            print!("{}", workspace_tree(&snapshot.folders, &snapshot.secrets)?);
         }
         Commands::Search { pattern } => {
             for secret in snapshot
@@ -709,6 +758,50 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn list_renders_nested_and_empty_folders_without_secret_values() {
+        let folder = |id: &str, parent: Option<&str>, name: &str| Folder {
+            id: id.into(),
+            parent_id: parent.map(str::to_string),
+            name: name.into(),
+            wrapped_key: "private-folder-key".into(),
+        };
+        let secret = |folder: &str, name: &str| Secret {
+            id: format!("{folder}-{name}"),
+            folder_id: folder.into(),
+            name: name.into(),
+            encrypted_value: "private-secret-value".into(),
+        };
+        let folders = [
+            folder("prod", Some("app"), "production"),
+            folder("empty", Some("root"), "empty"),
+            folder("app", Some("root"), "infood"),
+            folder("root", None, ""),
+        ];
+        let secrets = [
+            secret("root", "ROOT_KEY"),
+            secret("prod", "DATABASE_URL"),
+            secret("app", "production"),
+            secret("prod", "API_KEY"),
+        ];
+        assert_eq!(
+            workspace_tree(&folders, &secrets).unwrap(),
+            concat!(
+                "📂 Workspace (4 secrets):\n\n",
+                "├── 📁 empty\n",
+                "├── 📁 infood\n",
+                "│   ├── 📁 production\n",
+                "│   │   ├── 🔑 API_KEY\n",
+                "│   │   └── 🔑 DATABASE_URL\n",
+                "│   └── 🔑 production\n",
+                "└── 🔑 ROOT_KEY\n",
+            )
+        );
+        assert_eq!(
+            workspace_tree(&[folder("root", None, "")], &[]).unwrap(),
+            "📂 Workspace (0 secrets):\n\nNo folders or secrets yet.\n"
+        );
+    }
     fn workspace(id: &str, name: &str) -> Workspace {
         Workspace {
             id: id.into(),

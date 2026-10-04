@@ -35,7 +35,7 @@ Credentials and the device private key are stored in macOS Keychain, Windows Cre
 | `ve pull` | Merge remote values; refuse conflicting local values |
 | `ve pull --force` | Replace `.env` with this folder's remote variables |
 | `ve diff` | Compare names and equality without printing values |
-| `ve list` | List folder paths and secret names in the configured organization |
+| `ve list` | Show the workspace tree, including empty folders and secret names |
 | `ve search PATTERN` | Search secret names in that organization |
 | `ve validate` | Check `.env` syntax and duplicate names |
 | `ve whoami` / `ve test` | Check the authenticated account |
