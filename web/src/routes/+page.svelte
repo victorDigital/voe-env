@@ -18,7 +18,7 @@
 	);
 	const commands = [
 		{ command: 've auth', description: 'Sign in' },
-		{ command: 've init', description: 'Set project path and password' },
+		{ command: 've init --org ID --path dev', description: 'Select a workspace folder' },
 		{ command: 've push', description: 'Upload .env' },
 		{ command: 've pull', description: 'Download .env' },
 		{ command: 've update', description: 'Update CLI' }
@@ -61,7 +61,7 @@
 	<title>VOE · Encrypted .env files</title>
 	<meta
 		name="description"
-		content="Sync encrypted .env files across machines and share folder access."
+		content="Sync encrypted .env files across machines and collaborate in passwordless workspaces."
 	/>
 </svelte:head>
 
@@ -71,7 +71,7 @@
 		<div class="overview">
 			<section class="intro" aria-labelledby="page-title">
 				<h1 id="page-title">Encrypted<br /><code>.env</code> files.</h1>
-				<p>Sync encrypted .env files across machines and share folder access.</p>
+				<p>Sync encrypted .env files across machines and collaborate in passwordless workspaces.</p>
 			</section>
 			<section id="install" class="install-section" aria-labelledby="install-title">
 				<div class="section-heading">

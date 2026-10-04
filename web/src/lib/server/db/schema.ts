@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { sql, relations } from 'drizzle-orm';
 import {
 	pgTable,
 	text,
@@ -7,7 +7,10 @@ import {
 	index,
 	integer,
 	json,
-	unique
+	unique,
+	foreignKey,
+	check,
+	primaryKey
 } from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
@@ -34,6 +37,7 @@ export const session = pgTable(
 		updatedAt: timestamp('updated_at')
 			.$onUpdate(() => /* @__PURE__ */ new Date())
 			.notNull(),
+		activeOrganizationId: text('active_organization_id'),
 		ipAddress: text('ip_address'),
 		userAgent: text('user_agent'),
 		userId: text('user_id')
@@ -154,3 +158,184 @@ export const folderShares = pgTable(
 		unique('folder_shares_unique').on(table.ownerId, table.sharedWithId, table.folderPath)
 	]
 );
+
+export const organization = pgTable('organization', {
+	id: text('id').primaryKey(),
+	name: text('name').notNull(),
+	slug: text('slug').notNull().unique(),
+	logo: text('logo'),
+	metadata: text('metadata'),
+	createdAt: timestamp('created_at').notNull()
+});
+export const member = pgTable(
+	'member',
+	{
+		id: text('id').primaryKey(),
+		organizationId: text('organization_id')
+			.notNull()
+			.references(() => organization.id, { onDelete: 'cascade' }),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		role: text('role').notNull(),
+		createdAt: timestamp('created_at').notNull()
+	},
+	(t) => [
+		unique('member_org_user').on(t.organizationId, t.userId),
+		check('member_role', sql`${t.role} in ('owner','admin','member','viewer')`)
+	]
+);
+export const invitation = pgTable('invitation', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id')
+		.notNull()
+		.references(() => organization.id, { onDelete: 'cascade' }),
+	email: text('email').notNull(),
+	role: text('role').notNull(),
+	status: text('status').notNull(),
+	expiresAt: timestamp('expires_at').notNull(),
+	inviterId: text('inviter_id')
+		.notNull()
+		.references(() => user.id, { onDelete: 'cascade' }),
+	createdAt: timestamp('created_at').defaultNow().notNull()
+});
+export const passkey = pgTable('passkey', {
+	id: text('id').primaryKey(),
+	name: text('name'),
+	publicKey: text('public_key').notNull(),
+	userId: text('user_id')
+		.notNull()
+		.references(() => user.id, { onDelete: 'cascade' }),
+	credentialID: text('credential_id').notNull().unique(),
+	counter: integer('counter').notNull(),
+	deviceType: text('device_type').notNull(),
+	backedUp: boolean('backed_up').notNull(),
+	transports: text('transports'),
+	createdAt: timestamp('created_at'),
+	aaguid: text('aaguid')
+});
+export const encryptionIdentity = pgTable('encryption_identity', {
+	userId: text('user_id')
+		.primaryKey()
+		.references(() => user.id, { onDelete: 'cascade' }),
+	publicKey: text('public_key').notNull(),
+	encryptedPrivateKey: text('encrypted_private_key').notNull(),
+	recoveryEnvelope: text('recovery_envelope').notNull(),
+	recoveryAuthHash: text('recovery_auth_hash').notNull(),
+	createdAt: timestamp('created_at').defaultNow().notNull()
+});
+export const accountEnvelope = pgTable('account_key_envelope', {
+	credentialId: text('credential_id')
+		.primaryKey()
+		.references(() => passkey.credentialID, { onDelete: 'cascade' }),
+	userId: text('user_id')
+		.notNull()
+		.references(() => encryptionIdentity.userId, { onDelete: 'cascade' }),
+	wrappedKey: text('wrapped_key').notNull()
+});
+export const workspace = pgTable('workspace', {
+	organizationId: text('organization_id')
+		.primaryKey()
+		.references(() => organization.id, { onDelete: 'cascade' }),
+	epoch: integer('epoch').default(1).notNull(),
+	revision: integer('revision').default(0).notNull(),
+	rotationRequired: boolean('rotation_required').default(false).notNull()
+});
+export const vaultFolder = pgTable(
+	'vault_folder',
+	{
+		id: text('id').primaryKey(),
+		organizationId: text('organization_id')
+			.notNull()
+			.references(() => workspace.organizationId, { onDelete: 'cascade' }),
+		parentId: text('parent_id'),
+		name: text('name').notNull(),
+		wrappedKey: text('wrapped_key').notNull()
+	},
+	(t) => [
+		unique('folder_org_id').on(t.organizationId, t.id),
+		unique('folder_sibling').on(t.organizationId, t.parentId, t.name).nullsNotDistinct(),
+		foreignKey({
+			columns: [t.organizationId, t.parentId],
+			foreignColumns: [t.organizationId, t.id]
+		}),
+		check(
+			'folder_name',
+			sql`(${t.parentId} is null and ${t.name} = '') or (${t.parentId} is not null and ${t.name} <> '' and position(':' in ${t.name}) = 0)`
+		)
+	]
+);
+export const vaultSecret = pgTable(
+	'vault_secret',
+	{
+		id: text('id').primaryKey(),
+		organizationId: text('organization_id')
+			.notNull()
+			.references(() => workspace.organizationId, { onDelete: 'cascade' }),
+		folderId: text('folder_id').notNull(),
+		name: text('name').notNull(),
+		encryptedValue: text('encrypted_value').notNull()
+	},
+	(t) => [
+		unique('secret_folder_name').on(t.folderId, t.name),
+		foreignKey({
+			columns: [t.organizationId, t.folderId],
+			foreignColumns: [vaultFolder.organizationId, vaultFolder.id]
+		}).onDelete('cascade')
+	]
+);
+export const encryptionDevice = pgTable('encryption_device', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	publicKey: text('public_key').notNull(),
+	deviceCodeId: text('device_code_id').notNull().unique(),
+	sessionId: text('session_id')
+		.unique()
+		.references(() => session.id, { onDelete: 'set null' }),
+	revoked: boolean('revoked').default(false).notNull(),
+	createdAt: timestamp('created_at').defaultNow().notNull()
+});
+export const organizationEnvelope = pgTable(
+	'organization_key_envelope',
+	{
+		organizationId: text('organization_id')
+			.notNull()
+			.references(() => workspace.organizationId, { onDelete: 'cascade' }),
+		recipient: text('recipient').notNull(),
+		identityBinding: text('identity_binding').notNull(),
+		epoch: integer('epoch').notNull(),
+		wrappedKey: text('wrapped_key').notNull(),
+		provisionedBy: text('provisioned_by')
+			.notNull()
+			.references(() => user.id)
+	},
+	(t) => [primaryKey({ columns: [t.organizationId, t.recipient] })]
+);
+export const auditEvent = pgTable('audit_event', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').references(() => organization.id, {
+		onDelete: 'cascade'
+	}),
+	actorId: text('actor_id').notNull(),
+	action: text('action').notNull(),
+	createdAt: timestamp('created_at').defaultNow().notNull()
+});
+export const legacyMigration = pgTable('legacy_migration', {
+	userId: text('user_id')
+		.primaryKey()
+		.references(() => user.id),
+	organizationId: text('organization_id')
+		.notNull()
+		.references(() => workspace.organizationId),
+	sourceDigest: text('source_digest').notNull(),
+	status: text('status').default('pending').notNull(),
+	completedAt: timestamp('completed_at')
+});
+export const passkeyVerification = pgTable('passkey_verification', {
+	sessionId: text('session_id')
+		.primaryKey()
+		.references(() => session.id, { onDelete: 'cascade' }),
+	credentialId: text('credential_id'),
+	recovery: boolean('recovery').default(false).notNull(),
+	verifiedAt: timestamp('verified_at').defaultNow().notNull()
+});

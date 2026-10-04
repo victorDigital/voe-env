@@ -1,37 +1,9 @@
-import { json } from '@sveltejs/kit';
-import { auth } from '#lib/server/auth.ts';
-import { getIncomingShares } from '#lib/server/shares.ts';
-import type { RequestHandler } from './$types';
-
-export const GET: RequestHandler = async ({ request }) => {
-	const session = await auth.api.getSession({
-		headers: request.headers
-	});
-
-	if (!session || !session.user) {
-		return json({ error: 'Unauthorized' }, { status: 401 });
-	}
-
-	try {
-		const shares = await getIncomingShares(session.user.id);
-
-		return json({
-			success: true,
-			shares: shares.map((share) => ({
-				id: share.id,
-				folderPath: share.folderPath,
-				permission: share.permission,
-				encryptedVaultPassword: share.encryptedVaultPassword,
-				sharedBy: {
-					email: share.owner.email,
-					name: share.owner.name
-				},
-				createdAt: share.createdAt,
-				expiresAt: share.expiresAt
-			}))
-		});
-	} catch (error: any) {
-		console.error('Get incoming shares error:', error);
-		return json({ error: error.message || 'Failed to get shares' }, { status: 500 });
-	}
-};
+import { error } from '@sveltejs/kit';
+const retired = () =>
+	error(
+		410,
+		'Individual shares and password vault APIs have been retired. Upgrade the CLI and use workspaces. Existing data is available in the legacy archive.'
+	);
+export const GET = retired;
+export const POST = retired;
+export const DELETE = retired;

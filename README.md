@@ -1,12 +1,12 @@
 # VOE ENV
 
-Set `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, and `PUBLIC_BETTER_AUTH_URL` in your deployment environment or a root `.env` file, then start the web app and its PostgreSQL database:
+Set `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `EMAIL_API_KEY` (Resend), and `EMAIL_FROM` (verified sender) in your deployment environment or a root `.env` file, then start the web app and its PostgreSQL database:
 
 ```sh
 docker compose up -d --build
 ```
 
-Open http://localhost:3000. The existing authentication and CLI release environment variables still apply. No `DATABASE_URL` is needed for Compose.
+Open http://localhost:3000. Sign in by passkey or email setup link. Vault unlock requires a PRF-capable passkey and an offline recovery backup. No `DATABASE_URL` is needed for Compose.
 
 For a hosted deployment, set `BETTER_AUTH_URL` to the public HTTPS URL before building. Compose passes it to SvelteKit for the site's origin. `PUBLIC_BETTER_AUTH_URL` is optional; leave it empty to use the browser's current origin. Rebuild the web image after changing either URL.
 
@@ -17,3 +17,5 @@ The `postgres-data` volume stores the database and `db-password` stores its pass
 This setup creates a separate database. Existing users and vault data from an external production database require a separate import.
 
 See [CLI installation and commands](cli/README.md).
+
+This release replaces individual shares with organization-wide access and disables legacy writes. Back up before upgrading, configure email delivery, and migrate through workspace settings. Existing recipients are not added to organizations automatically. See [web setup, encryption, migration, and verification](web/README.md).

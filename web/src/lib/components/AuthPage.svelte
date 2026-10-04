@@ -1,233 +1,106 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { authClient } from '#lib/auth-client.ts';
+	import { signInAndUnlock } from '#lib/vault-client.ts';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
-	import { Label } from '#lib/components/ui/label/index.ts';
 	import SiteHeader from './SiteHeader.svelte';
 	import SiteFooter from './SiteFooter.svelte';
-	import Eye from 'remixicon-svelte/icons/eye-line';
-	import EyeOff from 'remixicon-svelte/icons/eye-off-line';
-	import LoaderCircle from 'remixicon-svelte/icons/loader-4-line';
-
 	let { mode, redirectTo }: { mode: 'login' | 'signup'; redirectTo: string } = $props();
-	let signup = $derived(mode === 'signup');
-	let name = $state('');
 	let email = $state('');
-	let password = $state('');
-	let showPassword = $state(false);
-	let loading = $state(false);
+	let name = $state('');
+	let busy = $state(false);
 	let error = $state('');
-	let otherPage = $derived(
-		`${signup ? '/login' : '/signup'}${redirectTo === '/dashboard' ? '' : `?redirectTo=${encodeURIComponent(redirectTo)}`}`
-	);
-
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		if (loading) return;
-		loading = true;
+	let sent = $state(false);
+	async function signin() {
+		busy = true;
 		error = '';
 		try {
-			const result = signup
-				? await authClient.signUp.email({ name: name.trim(), email: email.trim(), password })
-				: await authClient.signIn.email({ email: email.trim(), password });
-			if (result.error) {
-				error =
-					result.error.message ||
-					`Unable to ${signup ? 'create your account' : 'log in'}. Please try again.`;
-				return;
-			}
-			password = '';
+			await signInAndUnlock();
 			await goto(redirectTo, { refreshAll: true });
-		} catch {
-			error = 'Unable to connect. Please try again.';
+		} catch (e) {
+			error = (e as Error).message;
 		} finally {
-			loading = false;
+			busy = false;
+		}
+	}
+	async function send(event: SubmitEvent) {
+		event.preventDefault();
+		busy = true;
+		error = '';
+		try {
+			const result = await authClient.signIn.magicLink({
+				email: email.trim(),
+				name: name.trim() || undefined,
+				callbackURL: redirectTo
+			});
+			if (result.error) throw new Error(result.error.message);
+			sent = true;
+		} catch (e) {
+			error = (e as Error).message;
+		} finally {
+			busy = false;
 		}
 	}
 </script>
 
-<svelte:head>
-	<title>{signup ? 'Create an account' : 'Log in'} — VOE</title>
-	<meta
-		name="description"
-		content={signup
-			? 'Create your VOE account and keep your environment variables encrypted and in sync.'
-			: 'Log in to your VOE environment vault.'}
-	/>
-</svelte:head>
-
-<div class="site-shell auth-shell">
+<svelte:head><title>{mode === 'signup' ? 'Create an account' : 'Sign in'} · VOE</title></svelte:head
+>
+<div class="site-shell flex min-h-svh flex-col">
 	<SiteHeader auth />
-	<main id="main-content" class="auth-main">
-		<section class="auth-panel" aria-labelledby="auth-title">
-			<h1 id="auth-title">{signup ? 'Sign up' : 'Log in'}</h1>
-			<form onsubmit={submit} aria-describedby={error ? 'auth-error' : undefined}>
-				<fieldset disabled={loading}>
-					{#if signup}
-						<div class="field">
-							<Label for="name">Name</Label><Input
-								id="name"
-								name="name"
-								autocomplete="name"
-								placeholder="Your name"
-								bind:value={name}
-								required
-								class="h-11"
-							/>
-						</div>
-					{/if}
-					<div class="field">
-						<Label for="email">Email</Label><Input
-							id="email"
-							name="email"
-							type="email"
-							autocomplete="email"
-							placeholder="you@example.com"
-							bind:value={email}
+	<main id="main-content" class="flex flex-1 items-center justify-center py-16">
+		<section class="w-full max-w-sm" aria-labelledby="auth-title">
+			<h1 id="auth-title" class="text-3xl font-medium tracking-tight">
+				{mode === 'signup' ? 'Your secrets. Your keys.' : 'Welcome back'}
+			</h1>
+			<p class="mt-3 text-sm leading-relaxed text-muted-foreground">
+				{mode === 'signup'
+					? 'Create your passwordless workspace.'
+					: 'Sign in and unlock your vault with your passkey.'}
+			</p>
+			{#if mode === 'login'}<Button class="mt-8 h-11 w-full" disabled={busy} onclick={signin}
+					>Sign in with passkey</Button
+				>{/if}
+			<form onsubmit={send} class="mt-8 space-y-4">
+				{#if mode === 'signup'}<label class="block text-sm" for="name"
+						>Name<Input
+							id="name"
+							class="mt-2"
+							bind:value={name}
+							autocomplete="name"
 							required
-							class="h-11"
-						/>
-					</div>
-					<div class="field">
-						<Label for="password">Password</Label>
-						<div class="password-field">
-							<Input
-								id="password"
-								name="password"
-								type={showPassword ? 'text' : 'password'}
-								autocomplete={signup ? 'new-password' : 'current-password'}
-								minlength={signup ? 8 : undefined}
-								maxlength={128}
-								aria-describedby={signup ? 'password-hint' : undefined}
-								bind:value={password}
-								required
-								class="h-11 pr-11"
-							/>
-							<button
-								type="button"
-								class="password-toggle"
-								onclick={() => (showPassword = !showPassword)}
-								aria-label={showPassword ? 'Hide password' : 'Show password'}
-								aria-pressed={showPassword}
-								>{#if showPassword}<EyeOff class="size-4" />{:else}<Eye
-										class="size-4"
-									/>{/if}</button
-							>
-						</div>
-						{#if signup}<p id="password-hint" class="password-hint">At least 8 characters.</p>{/if}
-					</div>
-					{#if error}<p id="auth-error" role="alert" class="form-error">{error}</p>{/if}
-					<Button type="submit" class="mt-1 h-11 w-full" disabled={loading}
-						>{#if loading}<LoaderCircle class="size-4 animate-spin" />{signup
-								? 'Creating account…'
-								: 'Logging in…'}{:else}{signup ? 'Create account' : 'Log in'}{/if}</Button
-					>
-				</fieldset>
+						/></label
+					>{/if}
+				<label class="block text-sm" for="email"
+					>Email<Input
+						id="email"
+						class="mt-2"
+						type="email"
+						bind:value={email}
+						autocomplete="email"
+						required
+					/></label
+				>
+				<Button type="submit" variant="outline" class="h-11 w-full" disabled={busy}
+					>{mode === 'signup' ? 'Send setup link' : 'Email a sign-in link'}</Button
+				>
 			</form>
-			<p class="other-page">
-				{signup ? 'Already have an account?' : 'Don’t have an account?'}
-				<a href={otherPage}>{signup ? 'Log in' : 'Sign up'}</a>
+			<p class="mt-4 text-xs leading-relaxed text-muted-foreground">
+				Email lets you set up or recover your account. Existing secrets still require an enrolled
+				passkey or your offline recovery key.
+			</p>
+			{#if sent}<p role="status" class="mt-4 text-sm">
+					Check your email for a link. It expires in 10 minutes.
+				</p>{/if}
+			{#if error}<p role="alert" class="mt-4 text-sm text-destructive">{error}</p>{/if}
+			<p class="mt-8 text-center text-sm text-muted-foreground">
+				<a
+					class="underline underline-offset-4"
+					href={`${mode === 'login' ? '/signup' : '/login'}?redirectTo=${encodeURIComponent(redirectTo)}`}
+					>{mode === 'login' ? 'Create an account' : 'Already have a passkey? Sign in'}</a
+				>
 			</p>
 		</section>
 	</main>
 	<SiteFooter />
 </div>
-
-<style>
-	.auth-shell {
-		min-height: 100svh;
-		display: flex;
-		flex-direction: column;
-	}
-	.auth-main {
-		display: flex;
-		flex: 1;
-		justify-content: center;
-		align-items: center;
-		padding: 48px 0 64px;
-	}
-	.auth-panel {
-		width: 100%;
-		max-width: 348px;
-	}
-	h1 {
-		font-size: 30px;
-		line-height: 1.2;
-		letter-spacing: -0.04em;
-		font-weight: 550;
-	}
-	form {
-		margin-top: 32px;
-	}
-	fieldset {
-		display: flex;
-		flex-direction: column;
-		gap: 20px;
-	}
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 9px;
-	}
-	.field :global(label) {
-		font-size: 13px;
-		font-weight: 500;
-	}
-	.field :global(input) {
-		font-size: 13px;
-		background: var(--card);
-	}
-	.password-field {
-		position: relative;
-	}
-	.password-toggle {
-		position: absolute;
-		right: 3px;
-		top: 3px;
-		width: 38px;
-		height: 38px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--muted-foreground);
-	}
-	.password-toggle:hover {
-		color: var(--foreground);
-	}
-	.password-hint {
-		color: var(--muted-foreground);
-		font-size: 12px;
-	}
-	.form-error {
-		color: var(--destructive);
-		font-size: 12px;
-		line-height: 1.6;
-	}
-	.other-page {
-		margin-top: 25px;
-		font-size: 13px;
-		text-align: center;
-		color: var(--muted-foreground);
-	}
-	.other-page a {
-		margin-left: 4px;
-		color: var(--foreground);
-	}
-	.other-page a:hover {
-		text-decoration: underline;
-		text-underline-offset: 4px;
-	}
-	@media (max-width: 640px) {
-		.auth-main {
-			align-items: flex-start;
-			padding: 40px 0 48px;
-		}
-		h1 {
-			font-size: 30px;
-		}
-		.field :global(input) {
-			font-size: 16px;
-		}
-	}
-</style>

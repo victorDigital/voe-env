@@ -1,497 +1,649 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
-	import * as Dialog from '#lib/components/ui/dialog/index.ts';
-	import { Label } from '#lib/components/ui/label/index.ts';
-	import type { PageData } from './$types';
-	import DataTable from './data-table.svelte';
-	import type { EnvItem } from './types.ts';
-	import Lock from 'remixicon-svelte/icons/lock-line';
-	import LockOpen from 'remixicon-svelte/icons/lock-unlock-line';
-	import Users from 'remixicon-svelte/icons/group-line';
-	import Share2 from 'remixicon-svelte/icons/share-line';
-	import ShareDialog from './ShareDialog.svelte';
-	import { initializeKeys, getStoredPrivateKey, decryptWithPrivateKey } from '#lib/crypto.ts';
-
-	let { data, form }: { data: PageData; form: any } = $props();
-
-	let currentPath = $derived(data.path);
-	let shareInfo = $derived(data.shareInfo || { isShared: false }) as {
-		isShared: boolean;
-		sharedBy?: { email: string; name: string };
-		permission?: 'read' | 'readwrite';
-		encryptedVaultPassword?: string;
-	};
-	let vaultPassword = $state('');
-	let tempPassword = $state('');
-	let deleteKey = $state('');
-	let showPasswordPrompt = $state(false);
-	let unlockError = $state('');
-	let isUnlocking = $state(false);
-	let showAllValues = $state(false);
-	let pendingShowAll = $state(false);
-	let showShareDialog = $state(false);
-	let keysInitialized = $state(false);
-	let pendingShare = $state(false);
-	let skipAutoUnlock = $state(false);
-	let pendingDelete = $state('');
-	let showDeleteDialog = $state(false);
-	let deleting = $state(false);
-	let clientError = $state('');
-	let passwordInput = $state<HTMLInputElement | null>(null);
-	let activePath = $state<string | undefined>();
-	let vaultGeneration = 0;
-
-	let encryptedEnvs = $derived(data.encryptedEnvs || {});
-	let decryptedEnvs = $state<Record<string, string>>({});
-	let breadcrumbs = $derived(currentPath ? currentPath.split(':') : []);
-
-	onMount(async () => {
-		try {
-			const { publicKey, isNew } = await initializeKeys();
-			if (isNew) {
-				await fetch('/api/keys', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ publicKey })
-				});
-			}
-			keysInitialized = true;
-		} catch (err) {
-			console.error('Failed to initialize encryption keys:', err);
-			clientError = 'Sharing is unavailable in this browser. Your vault can still be unlocked.';
-		}
-	});
-
-	$effect(() => {
-		if (activePath === currentPath) return;
-		activePath = currentPath;
-		vaultGeneration += 1;
-		vaultPassword = '';
-		decryptedEnvs = {};
-		showAllValues = false;
-		showShareDialog = false;
-		showDeleteDialog = false;
-		pendingDelete = '';
-		deleteKey = '';
-		isUnlocking = false;
-		skipAutoUnlock = false;
-		cancelUnlock();
-	});
-
-	$effect(() => {
-		if (
-			shareInfo.isShared &&
-			shareInfo.encryptedVaultPassword &&
-			!vaultPassword &&
-			keysInitialized &&
-			!skipAutoUnlock
-		) {
-			decryptSharedPassword();
-		}
-	});
-
-	async function decryptSharedPassword() {
-		const privateKey = getStoredPrivateKey();
-		if (!privateKey || !shareInfo.encryptedVaultPassword) return;
-
-		const generation = vaultGeneration;
-		const path = currentPath;
-		const encryptedPassword = shareInfo.encryptedVaultPassword;
-		try {
-			const decryptedPassword = await decryptWithPrivateKey(encryptedPassword, privateKey);
-			if (
-				generation === vaultGeneration &&
-				currentPath === path &&
-				!skipAutoUnlock &&
-				shareInfo.encryptedVaultPassword === encryptedPassword
-			) {
-				vaultPassword = decryptedPassword;
-			}
-		} catch (err) {
-			console.error('Failed to decrypt shared vault password:', err);
-		}
-	}
-
-	async function deriveKey(password: string): Promise<CryptoKey> {
-		const keyMaterial = await crypto.subtle.importKey(
-			'raw',
-			new TextEncoder().encode(password),
-			'PBKDF2',
-			false,
-			['deriveKey']
-		);
-		return crypto.subtle.deriveKey(
-			{
-				name: 'PBKDF2',
-				salt: new TextEncoder().encode('fixedsalt'),
-				iterations: 100000,
-				hash: 'SHA-256'
-			},
-			keyMaterial,
-			{ name: 'AES-GCM', length: 256 },
-			false,
-			['encrypt', 'decrypt']
-		);
-	}
-
-	async function decrypt(encrypted: string, password: string): Promise<string> {
-		const key = await deriveKey(password);
-		const combined = new Uint8Array(
-			atob(encrypted)
-				.split('')
-				.map((c) => c.charCodeAt(0))
-		);
-		const iv = combined.slice(0, 12);
-		const data = combined.slice(12);
-		const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-		return new TextDecoder().decode(decrypted);
-	}
-
-	async function tryUnlock() {
-		if (!tempPassword) {
-			unlockError = 'Please enter a password';
-			return;
-		}
-
-		isUnlocking = true;
-		unlockError = '';
-		const generation = vaultGeneration;
-		const source = encryptedEnvs;
-		const password = tempPassword;
-
-		try {
-			const firstKey = Object.keys(source)[0];
-			if (firstKey) {
-				await decrypt(source[firstKey], password);
-			}
-
-			if (generation !== vaultGeneration || source !== encryptedEnvs) return;
-			vaultPassword = password;
-			await decryptAllEnvs();
-			if (generation !== vaultGeneration || source !== encryptedEnvs) return;
-			showPasswordPrompt = false;
-			tempPassword = '';
-			if (pendingShowAll) {
-				showAllValues = true;
-				pendingShowAll = false;
-			}
-			if (pendingShare) {
-				pendingShare = false;
-				showShareDialog = true;
-			}
-		} catch (err) {
-			if (generation !== vaultGeneration) return;
-			unlockError = 'Invalid password. Please try again.';
-			console.error('Unlock error:', err);
-		} finally {
-			if (generation === vaultGeneration) isUnlocking = false;
-		}
-	}
-
-	function cancelUnlock() {
-		showPasswordPrompt = false;
-		tempPassword = '';
-		unlockError = '';
-		pendingShowAll = false;
-		pendingShare = false;
-	}
-
-	async function handleRequestUnlock() {
-		showPasswordPrompt = true;
-		unlockError = '';
-		await tick();
-		passwordInput?.focus();
-	}
-
-	function handleShowAll() {
-		if (Object.keys(encryptedEnvs).length > 0 && !vaultPassword) {
-			pendingShowAll = true;
-			handleRequestUnlock();
-		} else {
-			showAllValues = !showAllValues;
-		}
-	}
-
-	$effect(() => {
-		if (vaultPassword && Object.keys(encryptedEnvs).length > 0) {
-			decryptAllEnvs();
-		} else {
-			decryptedEnvs = {};
-		}
-	});
-
-	async function decryptAllEnvs() {
-		const generation = vaultGeneration;
-		const password = vaultPassword;
-		const source = encryptedEnvs;
-		const newDecrypted: Record<string, string> = {};
-		for (const [key, enc] of Object.entries(source)) {
-			try {
-				newDecrypted[key] = await decrypt(enc as string, password);
-			} catch {}
-		}
-		if (generation === vaultGeneration && vaultPassword === password && encryptedEnvs === source) {
-			decryptedEnvs = newDecrypted;
-		}
-	}
-
-	function navigateTo(path: string) {
-		goto(`?path=${encodeURIComponent(path)}`);
-	}
-
-	function requestDelete(name: string) {
-		pendingDelete = name;
-		showDeleteDialog = true;
-	}
-
-	async function deleteItem() {
-		deleteKey = currentPath ? `${currentPath}:${pendingDelete}` : pendingDelete;
-		await tick();
-		const deleteForm = document.getElementById('delete-form') as HTMLFormElement;
-		deleteForm.requestSubmit();
-	}
-
-	function handleShare() {
-		if (!vaultPassword) {
-			pendingShare = true;
-			handleRequestUnlock();
-		} else {
-			showShareDialog = true;
-		}
-	}
-
-	function lockVault() {
-		vaultGeneration += 1;
-		skipAutoUnlock = true;
-		vaultPassword = '';
-		decryptedEnvs = {};
-		showAllValues = false;
-		isUnlocking = false;
-		cancelUnlock();
-	}
-
-	const tableData = $derived<EnvItem[]>(
-		data.items.map((item: any) => ({
-			name: item.name,
-			type: item.type,
-			value: decryptedEnvs[item.name],
-			encrypted: encryptedEnvs[item.name],
-			isShared: item.isShared,
-			sharedBy: item.sharedBy,
-			permission: item.permission
-		}))
+	import VaultAccess from '#lib/components/VaultAccess.svelte';
+	import { authClient } from '#lib/auth-client.ts';
+	import {
+		api,
+		isUnlocked,
+		identity,
+		lock,
+		initializeWorkspace,
+		organizationKey,
+		decryptWorkspace,
+		rotateWorkspace,
+		addBackupPasskey,
+		type Snapshot
+	} from '#lib/vault-client.ts';
+	import { randomKey, seal, unseal, bytes, wrapTo, fingerprint } from '#lib/vault-crypto.ts';
+	import {
+		context,
+		folderContext,
+		secretContext,
+		orgContext,
+		folderPath
+	} from '#lib/vault-format.ts';
+	import { permits } from '#lib/permissions.ts';
+	let { data } = $props();
+	let workspaces = $state<{ id: string; name: string; role: string }[]>([]);
+	let selected = $state('');
+	let snapshot = $state<Snapshot | null>(null);
+	let folderId = $state('');
+	let values = $state<Record<string, string>>({});
+	let revealed = $state(false);
+	let busy = $state(false);
+	let error = $state('');
+	let notice = $state('');
+	let passkeys = $state<{ id: string; name?: string | null }[]>([]);
+	let ownDevices = $state<{ id: string; revoked: boolean }[]>([]);
+	let deleteName = $state('');
+	let workspaceName = $state('');
+	let folderName = $state('');
+	let secretName = $state('');
+	let secretValue = $state('');
+	let email = $state('');
+	let role = $state<'admin' | 'member' | 'viewer'>('member');
+	let settings = $state(false);
+	let verifiedFingerprint = $state('');
+	let recipientId = $state('');
+	let ownFingerprint = $state('');
+	let currentFolder = $derived(snapshot?.folders.find((f) => f.id === folderId));
+	let canWrite = $derived(
+		!!snapshot && permits(snapshot.role, 'write') && !snapshot.rotationRequired
 	);
+	let canManage = $derived(!!snapshot && permits(snapshot.role, 'provision'));
+	onMount(() => {
+		run(loadWorkspaces);
+	});
+	$effect(() => {
+		if (!$isUnlocked) {
+			values = {};
+			secretValue = '';
+			ownFingerprint = '';
+		}
+	});
+	async function run(action: () => Promise<unknown>) {
+		if (busy) return;
+		busy = true;
+		error = '';
+		notice = '';
+		try {
+			await action();
+		} catch (e) {
+			error = (e as Error).message;
+		} finally {
+			busy = false;
+		}
+	}
+	async function loadAccountSettings() {
+		const keys = await authClient.passkey.listUserPasskeys();
+		if (keys.error) throw new Error(keys.error.message);
+		passkeys = keys.data || [];
+		ownDevices = await api('/api/devices');
+	}
+	async function loadWorkspaces() {
+		workspaces = await api('/api/workspaces');
+		if (!workspaces.some((w) => w.id === selected)) selected = workspaces[0]?.id || '';
+		if (selected) await loadWorkspace();
+		else {
+			snapshot = null;
+			values = {};
+		}
+	}
+	async function loadWorkspace() {
+		values = {};
+		snapshot = await api<Snapshot>(`/api/workspaces/${selected}`);
+		if (!snapshot.folders.some((f) => f.id === folderId))
+			folderId = snapshot.folders.find((f) => !f.parentId)?.id || '';
+		if ($isUnlocked && snapshot.envelopes.length) values = await decryptWorkspace(snapshot);
+		if ($isUnlocked) ownFingerprint = await fingerprint(identity().publicKey);
+	}
+	async function createWorkspace() {
+		if (!workspaceName.trim()) return;
+		const result = await authClient.organization.create({
+			name: workspaceName.trim(),
+			slug: `workspace-${crypto.randomUUID()}`
+		});
+		if (result.error || !result.data)
+			throw new Error(result.error?.message || 'Could not create workspace');
+		selected = result.data.id;
+		await initializeWorkspace(selected);
+		workspaceName = '';
+		await loadWorkspaces();
+	}
+	async function save() {
+		if (!snapshot) return;
+		try {
+			await api(`/api/workspaces/${selected}`, { ...snapshot, action: 'save' });
+		} catch (e) {
+			await loadWorkspace();
+			throw e;
+		}
+		await loadWorkspace();
+	}
+	async function createFolder() {
+		if (!snapshot || !folderName.trim() || !folderId) return;
+		const key = await organizationKey(snapshot);
+		const folderKey = randomKey();
+		const id = crypto.randomUUID();
+		const folder = {
+			id,
+			parentId: folderId,
+			name: folderName.trim(),
+			wrappedKey: await seal(key, folderKey, folderContext(selected, id, snapshot.epoch))
+		};
+		key.fill(0);
+		folderKey.fill(0);
+		snapshot = { ...snapshot, folders: [...snapshot.folders, folder] };
+		await save();
+		folderName = '';
+	}
+	async function saveSecret() {
+		if (!snapshot || !currentFolder) return;
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(secretName))
+			throw new Error('Use a valid environment variable name');
+		const orgKey = await organizationKey(snapshot);
+		const key = await unseal(
+			orgKey,
+			currentFolder.wrappedKey,
+			folderContext(selected, folderId, snapshot.epoch)
+		);
+		orgKey.fill(0);
+		const old = snapshot.secrets.find((s) => s.folderId === folderId && s.name === secretName);
+		const id = old?.id || crypto.randomUUID();
+		const secret = {
+			id,
+			folderId,
+			name: secretName,
+			encryptedValue: await seal(
+				key,
+				bytes(secretValue),
+				secretContext(selected, folderId, id, secretName, snapshot.epoch)
+			)
+		};
+		key.fill(0);
+		snapshot = { ...snapshot, secrets: [...snapshot.secrets.filter((s) => s.id !== id), secret] };
+		await save();
+		secretName = '';
+		secretValue = '';
+	}
+	async function deleteSecret(id: string) {
+		if (!snapshot || !confirm('Delete this secret?')) return;
+		snapshot = { ...snapshot, secrets: snapshot.secrets.filter((s) => s.id !== id) };
+		await save();
+	}
+	async function deleteFolder() {
+		if (!snapshot || !currentFolder?.parentId) return;
+		if (
+			snapshot.folders.some((f) => f.parentId === folderId) ||
+			snapshot.secrets.some((s) => s.folderId === folderId)
+		)
+			throw new Error('Empty this folder before deleting it');
+		const parent = currentFolder.parentId;
+		snapshot = { ...snapshot, folders: snapshot.folders.filter((f) => f.id !== folderId) };
+		folderId = parent;
+		await save();
+	}
+	async function invite() {
+		const result = await authClient.organization.inviteMember({
+			organizationId: selected,
+			email: email.trim(),
+			role
+		});
+		if (result.error) throw new Error(result.error.message);
+		email = '';
+		notice = 'Invitation sent. Approve their encryption access after they join.';
+	}
+	async function provision() {
+		if (!snapshot) return;
+		const member = snapshot.members.find((m) => m.userId === recipientId);
+		if (!member?.publicKey) throw new Error('This member must finish vault setup first');
+		const expected = await fingerprint(member.publicKey);
+		if (verifiedFingerprint.trim().toLowerCase().replace(/\s/g, '') !== expected)
+			throw new Error(
+				'Ask this member for their full fingerprint through a trusted channel and paste it here'
+			);
+		const key = await organizationKey(snapshot);
+		const recipient = `user:${member.userId}`;
+		const wrappedKey = await wrapTo(
+			member.publicKey,
+			key,
+			orgContext(selected, recipient, snapshot.epoch)
+		);
+		const identityBinding = await seal(
+			key,
+			bytes(member.publicKey),
+			context('recipient', selected, recipient, snapshot.epoch)
+		);
+		key.fill(0);
+		await api(`/api/workspaces/${selected}`, {
+			action: 'provision',
+			revision: snapshot.revision,
+			recipient,
+			publicKey: member.publicKey,
+			wrappedKey,
+			identityBinding
+		});
+		verifiedFingerprint = '';
+		recipientId = '';
+		await loadWorkspace();
+	}
+	async function manage(action: string, userId: string, role?: string) {
+		if (!snapshot) return;
+		if (
+			action === 'remove-member' &&
+			!confirm('Remove this member? New writes will pause until you rotate workspace keys.')
+		)
+			return;
+		await api(`/api/workspaces/${selected}`, { action, revision: snapshot.revision, userId, role });
+		await loadWorkspaces();
+	}
 </script>
 
-<svelte:head>
-	<title>Vault — VOE</title>
-	<meta
-		name="description"
-		content="Your encrypted environment variables, organized and ready to use."
-	/>
-</svelte:head>
-
-<div class="flex min-w-0 flex-1 flex-col">
-	<section aria-label="Environment variables" class="min-w-0 px-4 py-6 sm:px-6 sm:py-8">
-		{#if clientError || form?.error}
-			<p role="alert" class="mb-6 border-l-2 border-destructive py-1 pl-3 text-sm text-destructive">
-				{clientError || form.error}
-			</p>
-		{/if}
-
-		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-			<nav aria-label="Vault folders" class="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-				<button
-					type="button"
-					onclick={() => navigateTo('')}
-					aria-current={!currentPath ? 'page' : undefined}
-					class="transition-colors hover:text-foreground {currentPath
-						? 'text-muted-foreground'
-						: 'font-medium'}">All variables</button
-				>
-				{#each breadcrumbs as crumb, i}
-					<span aria-hidden="true" class="text-muted-foreground/50">/</span>
-					<button
-						type="button"
-						onclick={() => navigateTo(breadcrumbs.slice(0, i + 1).join(':'))}
-						aria-current={i === breadcrumbs.length - 1 ? 'page' : undefined}
-						class="max-w-52 truncate transition-colors hover:text-foreground {i ===
-						breadcrumbs.length - 1
-							? 'font-medium'
-							: 'text-muted-foreground'}">{crumb}</button
-					>
-				{/each}
-			</nav>
-			<div class="flex items-center gap-3">
-				{#if Object.keys(encryptedEnvs).length > 0}
-					<p class="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
-						{#if vaultPassword}<LockOpen class="size-3.5" aria-hidden="true" />{:else}<Lock
-								class="size-3.5"
-								aria-hidden="true"
-							/>{/if}
-						{vaultPassword ? 'Unlocked' : 'Locked'}
-					</p>
-				{/if}
-				{#if currentPath && !shareInfo.isShared}
-					<Button
-						variant="ghost"
-						size="sm"
-						onclick={handleShare}
-						disabled={!keysInitialized}
-						class="text-muted-foreground"
-						><Share2 class="size-3.5" aria-hidden="true" />Share folder</Button
-					>
-				{/if}
-			</div>
+<svelte:head><title>Workspaces · VOE</title></svelte:head>
+<div class="p-4 sm:p-6 lg:p-8">
+	<div class="flex flex-wrap items-start justify-between gap-4">
+		<div>
+			<h2 class="text-2xl font-semibold tracking-tight">Workspaces</h2>
+			<p class="mt-1 text-sm text-muted-foreground">Shared secrets, encrypted on your device.</p>
 		</div>
-
-		{#if shareInfo.isShared}
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
-				<Users class="size-3.5" />
-				<span>Shared by {shareInfo.sharedBy?.name || shareInfo.sharedBy?.email}</span>
-				<span class="text-muted-foreground/50" aria-hidden="true">·</span>
-				<span>{shareInfo.permission === 'readwrite' ? 'Can edit' : 'View only'}</span>
-			</div>
-		{/if}
-
-		{#if showPasswordPrompt}
-			<section aria-labelledby="unlock-heading" class="mt-6 border border-border p-5 sm:p-6">
-				<div class="mb-5 flex items-start gap-3">
-					<Lock class="mt-0.5 size-4 text-muted-foreground" />
-					<div>
-						<h2 id="unlock-heading" class="text-sm font-medium">Unlock this folder</h2>
-						<p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-							Enter the vault password set with ve init.
-						</p>
-					</div>
+		<div class="flex gap-2">
+			<Button
+				variant="outline"
+				onclick={() => {
+					settings = !settings;
+					if (settings) run(loadAccountSettings);
+				}}>Settings</Button
+			>{#if $isUnlocked}<Button variant="outline" onclick={lock}>Lock vault</Button>{/if}
+		</div>
+	</div>
+	{#if error}<p
+			role="alert"
+			class="mt-5 rounded border border-destructive/30 p-3 text-sm text-destructive"
+		>
+			{error}
+		</p>{/if}
+	{#if notice}<p role="status" class="mt-5 text-sm">{notice}</p>{/if}
+	<VaultAccess userId={data.user.id} onready={() => run(loadWorkspaces)} />
+	{#if $isUnlocked}
+		<div class="mt-6 flex flex-wrap gap-3">
+			<label class="sr-only" for="workspace">Workspace</label><select
+				id="workspace"
+				class="h-10 min-w-52 rounded-md border bg-background px-3 text-sm"
+				bind:value={selected}
+				onchange={() => {
+					folderId = '';
+					run(loadWorkspace);
+				}}
+				disabled={busy}
+				><option value="" disabled>Select workspace</option>{#each workspaces as ws}<option
+						value={ws.id}>{ws.name}</option
+					>{/each}</select
+			><Button variant="outline" disabled={busy} onclick={() => run(loadWorkspaces)}>Refresh</Button
+			>
+		</div>
+		{#if !workspaces.length || settings}<form
+				class="mt-6 flex max-w-lg gap-2"
+				onsubmit={(e) => {
+					e.preventDefault();
+					run(createWorkspace);
+				}}
+			>
+				<Input
+					aria-label="New workspace name"
+					placeholder="New workspace name"
+					bind:value={workspaceName}
+					required
+				/><Button type="submit" disabled={busy}>Create workspace</Button>
+			</form>{/if}
+		{#if snapshot}
+			{#if !snapshot.folders.length}<div class="mt-8 rounded-xl border p-6">
+					<h3 class="font-medium">Set up workspace encryption</h3>
+					<p class="mt-2 text-sm text-muted-foreground">
+						An owner needs to initialize this workspace.
+					</p>
+					{#if snapshot.role === 'owner'}<Button
+							class="mt-4"
+							disabled={busy}
+							onclick={() =>
+								run(async () => {
+									await initializeWorkspace(selected);
+									await loadWorkspace();
+								})}>Initialize workspace</Button
+						>{/if}
 				</div>
-				<form
-					onsubmit={(event) => {
-						event.preventDefault();
-						tryUnlock();
-					}}
-					class="max-w-lg"
-				>
-					<Label for="vault-password" class="sr-only">Vault password</Label>
-					<div class="flex flex-wrap gap-2">
-						<Input
-							id="vault-password"
-							type="password"
-							autocomplete="off"
-							placeholder="Vault password"
-							bind:value={tempPassword}
-							bind:ref={passwordInput}
-							disabled={isUnlocking}
-							aria-invalid={!!unlockError}
-							aria-describedby={unlockError ? 'unlock-error' : undefined}
-							class="min-w-0 flex-1 basis-48"
-						/>
-						<Button type="submit" disabled={isUnlocking || !tempPassword}
-							>{isUnlocking ? 'Unlocking…' : 'Unlock'}</Button
-						>
-						<Button
-							variant="ghost"
-							onclick={cancelUnlock}
-							disabled={isUnlocking}
-							class="text-muted-foreground">Cancel</Button
-						>
-					</div>
-					{#if unlockError}<p id="unlock-error" role="alert" class="mt-3 text-xs text-destructive">
-							{unlockError}
-						</p>{/if}
-				</form>
-			</section>
-		{/if}
-
-		{#if tableData.length > 0}
-			<div class="mt-6 mb-3 flex items-center justify-between gap-3">
-				<p class="text-xs text-muted-foreground">
-					{tableData.length} item{tableData.length !== 1 ? 's' : ''}
-				</p>
-				{#if Object.keys(encryptedEnvs).length > 0}
-					<div class="flex items-center gap-1">
-						{#if vaultPassword}<Button
-								variant="ghost"
-								size="sm"
-								onclick={lockVault}
-								class="text-xs text-muted-foreground">Lock</Button
+			{:else if !snapshot.envelopes.length}<div class="mt-8 rounded-xl border p-6">
+					<h3 class="font-medium">Awaiting key approval</h3>
+					<p class="mt-2 text-sm text-muted-foreground">
+						Ask an owner or admin to approve your encryption identity. Share your fingerprint
+						through a trusted channel.
+					</p>
+					<code class="mt-4 block text-xs break-all select-all">{ownFingerprint}</code>
+				</div>
+			{:else}
+				{#if snapshot.rotationRequired}<div class="mt-5 rounded border border-amber-500/40 p-4">
+						<p class="text-sm">
+							Access changed. Writes are paused until all workspace keys are replaced.
+						</p>
+						{#if canManage}<Button
+								class="mt-3"
+								disabled={busy}
+								onclick={() =>
+									run(async () => {
+										await rotateWorkspace(snapshot!);
+										await loadWorkspace();
+									})}>Rotate keys and resume writes</Button
 							>{/if}
-						<Button
-							variant="ghost"
-							size="sm"
-							onclick={handleShowAll}
-							class="text-xs text-muted-foreground"
-							>{showAllValues ? 'Hide values' : 'Reveal values'}</Button
+					</div>{/if}
+				<div class="mt-6 rounded-xl border">
+					<div class="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+						<div class="flex items-center gap-3">
+							{#if currentFolder?.parentId}<Button
+									variant="ghost"
+									size="sm"
+									onclick={() => (folderId = currentFolder!.parentId!)}>← Back</Button
+								>{/if}<span class="font-mono text-sm"
+								>{currentFolder ? folderPath(snapshot.folders, folderId) || '/' : '/'}</span
+							><span class="text-xs text-muted-foreground">{snapshot.role}</span>
+						</div>
+						<Button variant="ghost" size="sm" onclick={() => (revealed = !revealed)}
+							>{revealed ? 'Hide values' : 'Show values'}</Button
 						>
 					</div>
-				{/if}
-			</div>
-			<DataTable
-				data={tableData}
-				{currentPath}
-				{navigateTo}
-				onDelete={requestDelete}
-				onRequestUnlock={handleRequestUnlock}
-				{showAllValues}
-				{isUnlocking}
-				readOnly={shareInfo.isShared && shareInfo.permission === 'read'}
-			/>
-		{:else}
-			<div class="flex flex-col items-start py-12">
-				<p class="text-lg font-medium tracking-tight">
-					{currentPath ? 'No variables in this folder' : 'No variables'}
+					{#each snapshot.folders.filter((f) => f.parentId === folderId) as folder}<button
+							class="flex w-full items-center justify-between border-b px-5 py-4 text-left text-sm hover:bg-muted/50"
+							onclick={() => (folderId = folder.id)}
+							><span>▸ {folder.name}</span><span class="text-muted-foreground">Folder</span></button
+						>{/each}
+					{#each snapshot.secrets.filter((s) => s.folderId === folderId) as secret}<div
+							class="flex flex-wrap items-center gap-4 border-b px-5 py-4 last:border-b-0"
+						>
+							<span class="w-full font-mono text-sm sm:w-40 sm:shrink-0">{secret.name}</span><code
+								class="min-w-0 basis-full text-xs break-all text-muted-foreground sm:flex-1 sm:basis-0"
+								>{revealed ? (values[secret.id] ?? 'Locked') : '••••••••••••'}</code
+							>{#if canWrite}<Button
+									variant="ghost"
+									size="sm"
+									disabled={busy}
+									onclick={() => {
+										secretName = secret.name;
+										secretValue = values[secret.id] || '';
+									}}>Edit</Button
+								><Button
+									variant="ghost"
+									size="sm"
+									disabled={busy}
+									onclick={() => run(() => deleteSecret(secret.id))}>Delete</Button
+								>{/if}
+						</div>{/each}
+					{#if !snapshot.secrets.some((s) => s.folderId === folderId) && !snapshot.folders.some((f) => f.parentId === folderId)}<p
+							class="p-8 text-center text-sm text-muted-foreground"
+						>
+							This folder is empty.
+						</p>{/if}
+				</div>
+				{#if canWrite}<div class="mt-6 grid gap-5 lg:grid-cols-2">
+						<form
+							class="space-y-3 rounded-xl border p-5"
+							onsubmit={(e) => {
+								e.preventDefault();
+								run(saveSecret);
+							}}
+						>
+							<h3 class="text-sm font-medium">Add or update a secret</h3>
+							<Input
+								aria-label="Secret name"
+								placeholder="DATABASE_URL"
+								bind:value={secretName}
+								required
+								pattern="[A-Za-z_][A-Za-z0-9_]*"
+							/><Input
+								aria-label="Secret value"
+								type="password"
+								autocomplete="off"
+								placeholder="Secret value"
+								bind:value={secretValue}
+							/><Button type="submit" disabled={busy}>Save secret</Button>
+						</form>
+						<form
+							class="space-y-3 rounded-xl border p-5"
+							onsubmit={(e) => {
+								e.preventDefault();
+								run(createFolder);
+							}}
+						>
+							<h3 class="text-sm font-medium">New folder</h3>
+							<Input
+								aria-label="Folder name"
+								placeholder="production"
+								bind:value={folderName}
+								required
+								pattern="[^:]+"
+							/><Button type="submit" variant="outline" disabled={busy}>Create folder</Button
+							>{#if currentFolder?.parentId}<Button
+									variant="ghost"
+									disabled={busy}
+									onclick={() => run(deleteFolder)}>Delete empty folder</Button
+								>{/if}
+						</form>
+					</div>{/if}
+			{/if}
+		{/if}
+		{#if settings}<section class="mt-8 space-y-6 rounded-xl border p-6">
+				<h3 class="text-lg font-medium">Account and access</h3>
+				<p class="text-sm text-muted-foreground">
+					All members can read every folder in a workspace. Use separate workspaces for different
+					audiences.
 				</p>
-				<p class="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-					Upload a .env file from your project directory:
-				</p>
-				<div class="mt-4">
-					<code class="border border-border px-3 py-1.5 text-xs text-muted-foreground"
-						>ve init &amp;&amp; ve push</code
+				<div class="flex flex-wrap gap-2">
+					<Button
+						variant="outline"
+						disabled={busy}
+						onclick={() =>
+							run(async () => {
+								await addBackupPasskey();
+								await loadAccountSettings();
+								notice = 'Backup passkey enrolled for vault unlock.';
+							})}>Add backup passkey</Button
+					><Button variant="outline" href="/dashboard/migrate">Migrate legacy vaults</Button><Button
+						variant="ghost"
+						href="/dashboard/legacy">Legacy archive</Button
 					>
 				</div>
-			</div>
-		{/if}
-	</section>
-
-	<form
-		id="delete-form"
-		method="POST"
-		action={`?path=${encodeURIComponent(currentPath)}&/delete`}
-		use:enhance={() => {
-			deleting = true;
-			return async ({ update }) => {
-				await update();
-				deleting = false;
-				showDeleteDialog = false;
-			};
-		}}
-	>
-		<input type="hidden" name="fullKey" bind:value={deleteKey} />
-		<input type="hidden" name="path" value={currentPath} />
-	</form>
-
-	<Dialog.Root bind:open={showDeleteDialog}>
-		<Dialog.Content class="sm:max-w-sm">
-			<Dialog.Header>
-				<Dialog.Title>Delete variable?</Dialog.Title>
-				<Dialog.Description
-					><span class="font-mono break-all text-foreground">{pendingDelete}</span> will be removed from
-					this vault. Your local .env file will stay as it is.</Dialog.Description
-				>
-			</Dialog.Header>
-			<Dialog.Footer class="mt-3">
-				<Button variant="outline" onclick={() => (showDeleteDialog = false)} disabled={deleting}
-					>Cancel</Button
-				>
-				<Button variant="destructive" onclick={deleteItem} disabled={deleting}
-					>{deleting ? 'Deleting…' : 'Delete variable'}</Button
-				>
-			</Dialog.Footer>
-		</Dialog.Content>
-	</Dialog.Root>
-	<ShareDialog bind:open={showShareDialog} folderPath={currentPath} {vaultPassword} />
+				<div>
+					<p class="text-sm font-medium">Your identity fingerprint</p>
+					<code class="mt-2 block text-xs break-all select-all">{ownFingerprint}</code>
+				</div>
+				<div class="space-y-3">
+					<h4 class="font-medium">Passkeys</h4>
+					{#each passkeys as credential}<div class="flex items-center justify-between gap-3">
+							<span class="text-sm">{credential.name || 'Passkey'}</span><Button
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onclick={() =>
+									run(async () => {
+										if (
+											!confirm(
+												'Remove this passkey? Sessions authenticated with it will be signed out. Keep another passkey or your recovery key.'
+											)
+										)
+											return;
+										const result = await authClient.passkey.deletePasskey({ id: credential.id });
+										if (result.error) throw new Error(result.error.message);
+										lock();
+										await loadAccountSettings();
+									})}>Remove passkey</Button
+							>
+						</div>{/each}
+				</div>
+				<div class="space-y-3">
+					<h4 class="font-medium">Your CLI devices</h4>
+					{#each ownDevices.filter((d) => !d.revoked) as device}<div
+							class="flex items-center justify-between gap-3"
+						>
+							<span class="font-mono text-xs">{device.id.slice(0, 8)}</span><Button
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onclick={() =>
+									run(async () => {
+										if (
+											!confirm(
+												'Revoke this device from every workspace? Administrators will need to rotate the affected workspace keys.'
+											)
+										)
+											return;
+										await api('/api/devices', { action: 'revoke', deviceId: device.id });
+										await loadAccountSettings();
+										await loadWorkspace();
+									})}>Revoke everywhere</Button
+							>
+						</div>{/each}
+				</div>
+				{#if snapshot && canManage}<div class="border-t pt-6">
+						<h4 class="font-medium">Members</h4>
+						<form
+							class="mt-4 flex flex-wrap gap-2"
+							onsubmit={(e) => {
+								e.preventDefault();
+								run(invite);
+							}}
+						>
+							<Input
+								class="max-w-xs"
+								aria-label="Invite email"
+								type="email"
+								placeholder="teammate@example.com"
+								bind:value={email}
+								required
+							/><select
+								aria-label="Invitation role"
+								class="rounded border bg-background px-3 text-sm"
+								bind:value={role}
+								><option value="member">Member</option><option value="viewer">Viewer</option><option
+									value="admin">Admin</option
+								></select
+							><Button type="submit" disabled={busy}>Invite</Button>
+						</form>
+						{#each snapshot.members as member}<div
+								class="mt-4 flex flex-wrap items-center gap-3 rounded border p-3"
+							>
+								<div class="min-w-40 flex-1">
+									<p class="text-sm">{member.name}</p>
+									<p class="text-xs text-muted-foreground">
+										{member.email} · {snapshot.recipients.includes(`user:${member.userId}`)
+											? 'Key provisioned'
+											: 'Awaiting key approval'}
+									</p>
+								</div>
+								<select
+									aria-label={`Role for ${member.email}`}
+									class="rounded border bg-background px-2 py-1 text-sm"
+									value={member.role}
+									disabled={busy || (member.role === 'owner' && snapshot.role !== 'owner')}
+									onchange={(e) => run(() => manage('role', member.userId, e.currentTarget.value))}
+									><option value="viewer">Viewer</option><option value="member">Member</option
+									><option value="admin">Admin</option
+									>{#if snapshot.role === 'owner' || member.role === 'owner'}<option value="owner"
+											>Owner</option
+										>{/if}</select
+								>{#if !snapshot.recipients.includes(`user:${member.userId}`)}<Button
+										size="sm"
+										variant="outline"
+										disabled={!member.publicKey || busy}
+										onclick={() => (recipientId = member.userId)}>Grant access</Button
+									>{/if}<Button
+									size="sm"
+									variant="ghost"
+									disabled={busy}
+									onclick={() => run(() => manage('remove-member', member.userId))}>Remove</Button
+								>
+							</div>{/each}
+						{#if recipientId}<form
+								class="mt-4 space-y-3 rounded border p-4"
+								onsubmit={(e) => {
+									e.preventDefault();
+									run(provision);
+								}}
+							>
+								<p class="text-sm">
+									Ask {snapshot.members.find((m) => m.userId === recipientId)?.email} for the fingerprint
+									shown in their settings, using a trusted channel.
+								</p>
+								<Input
+									aria-label="Verified member fingerprint"
+									placeholder="Paste their full identity fingerprint"
+									bind:value={verifiedFingerprint}
+									required
+								/><Button type="submit" disabled={busy}>Verify and grant access</Button>
+							</form>{/if}
+						{#each snapshot.devices.filter( (d) => snapshot!.recipients.includes(`device:${d.id}`) ) as device}<div
+								class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3"
+							>
+								<span class="text-xs"
+									>CLI {device.id.slice(0, 8)} · {snapshot.members.find(
+										(m) => m.userId === device.userId
+									)?.email}</span
+								><Button
+									size="sm"
+									variant="outline"
+									disabled={busy}
+									onclick={() =>
+										run(async () => {
+											if (!confirm('Revoke this device for this workspace?')) return;
+											await api(`/api/workspaces/${selected}`, {
+												action: 'revoke-device',
+												revision: snapshot!.revision,
+												deviceId: device.id
+											});
+											await loadWorkspace();
+										})}>Revoke device</Button
+								>
+							</div>{/each}
+					</div>{/if}
+				{#if snapshot}<div class="space-y-3 border-t pt-5">
+						<Button
+							variant="outline"
+							disabled={busy}
+							onclick={() =>
+								run(async () => {
+									if (!confirm('Leave this workspace? An admin will need to invite you again.'))
+										return;
+									await api(`/api/workspaces/${selected}`, {
+										action: 'leave',
+										revision: snapshot!.revision
+									});
+									selected = '';
+									snapshot = null;
+									await loadWorkspaces();
+								})}>Leave workspace</Button
+						>{#if snapshot.role === 'owner'}<details>
+								<summary class="cursor-pointer text-sm text-destructive">Delete workspace</summary>
+								<p class="my-3 text-sm">
+									Permanently delete all folders and secrets in this workspace. Type its name to
+									confirm.
+								</p>
+								<Input aria-label="Workspace name to delete" bind:value={deleteName} /><Button
+									class="mt-3"
+									variant="destructive"
+									disabled={busy || deleteName !== workspaces.find((w) => w.id === selected)?.name}
+									onclick={() =>
+										run(async () => {
+											await api(`/api/workspaces/${selected}`, {
+												action: 'delete-workspace',
+												revision: snapshot!.revision,
+												name: deleteName
+											});
+											selected = '';
+											snapshot = null;
+											deleteName = '';
+											await loadWorkspaces();
+										})}>Permanently delete workspace</Button
+								>
+							</details>{/if}
+					</div>{/if}
+			</section>{/if}
+	{/if}
 </div>

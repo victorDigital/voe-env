@@ -29,6 +29,9 @@ services:
       - NODE_ENV=production
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - EMAIL_API_KEY=${EMAIL_API_KEY}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - BODY_SIZE_LIMIT=16M
       - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-}
       - VOE_CLI_RELEASE_URL=${VOE_CLI_RELEASE_URL:-https://github.com/victorDigital/voe-env/releases/latest/download}
     volumes:

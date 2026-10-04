@@ -1,417 +1,659 @@
-use aes_gcm::{
-    aead::{Aead, Generate},
-    Aes256Gcm, KeyInit, Nonce,
-};
-use base64::{engine::general_purpose, Engine as _};
+mod crypto;
 use clap::{Parser, Subcommand};
-use pbkdf2::pbkdf2_hmac;
-use reqwest::Client;
-use rpassword;
+use crypto::{context, seal, unseal};
+use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
-use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
-use tokio::time::sleep;
+use serde_json::{json, Value};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    io::Write,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+use zeroize::Zeroizing;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser)]
-#[command(name = "ve")]
-#[command(about = "VOE ENV CLI for managing environment variables")]
+#[command(
+    name = "ve",
+    about = "Passwordless encrypted environment workspaces",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
-
 #[derive(Subcommand)]
 enum Commands {
+    #[command(about = "Enroll this CLI using your browser and passkey")]
+    Auth,
+    #[command(about = "Remove this CLI's locally stored credentials")]
+    Logout,
     #[command(about = "Update ve to the latest release")]
     Update,
-    /// Authenticate with the VOE server
-    Auth,
-    /// Test the protected API endpoint
-    Test,
-    /// Initialize VOE in the current directory
+    #[command(about = "List organizations you belong to")]
+    Workspaces,
+    #[command(about = "Select an organization and existing folder for this project")]
     Init {
-        /// Vault path (e.g., org:product:dev)
-        #[arg(short, long)]
-        path: Option<String>,
-        /// Vault password/lock
-        #[arg(short, long)]
-        password: Option<String>,
-        /// git mode, sets the vault path based on git info
         #[arg(long)]
-        git: bool,
+        org: String,
+        #[arg(short, long, default_value = "")]
+        path: String,
     },
-    /// Push .env file to the online vault
+    #[command(about = "Encrypt and push .env; --force also deletes missing remote keys")]
     Push {
-        /// Force push - delete server variables not present locally
         #[arg(long)]
         force: bool,
     },
-    /// Pull .env file from the online vault
+    #[command(about = "Decrypt into .env; --force replaces local values")]
     Pull {
-        /// Force replace with server version, may delete unsynced variables
         #[arg(long)]
         force: bool,
-        /// Vault path (e.g., org:product:dev) - initializes if .env doesn't exist
-        #[arg(short, long)]
-        path: Option<String>,
-        /// Vault password/lock - initializes if .env doesn't exist
-        #[arg(short = 'P', long)]
-        password: Option<String>,
     },
-    /// Change vault password (only if local and server are identical)
-    ChangePassword {
-        /// New vault password/lock
-        #[arg(short = 'P', long)]
-        password: Option<String>,
-    },
-    /// Display current user info
-    Whoami,
-    /// List all vault folders and keys in a tree view
+    #[command(about = "List folders and secret names in the selected organization")]
     List,
-    /// Compare local .env with server version
+    #[command(about = "Compare local and remote values without printing them")]
     Diff,
-    /// Search for keys across all vaults by pattern
-    Search {
-        /// Search pattern (supports partial matching)
-        pattern: String,
-    },
-    /// Validate .env file for common issues
+    #[command(about = "Search secret names in the selected organization")]
+    Search { pattern: String },
+    #[command(about = "Validate local .env syntax")]
     Validate,
-    /// Share a folder with another user
-    Share {
-        /// Folder path to share (e.g., org:product:dev)
-        folder_path: String,
-        /// Email of the user to share with
-        recipient_email: String,
-        /// Permission level (read or readwrite)
-        #[arg(default_value = "read")]
-        permission: String,
-    },
-    /// List your shares (incoming or outgoing)
-    Shares {
-        /// Show incoming shares (shared with you)
-        #[arg(long)]
-        incoming: bool,
-        /// Show outgoing shares (shared by you)
-        #[arg(long)]
-        outgoing: bool,
-    },
-    /// Revoke a share
-    Unshare {
-        /// Folder path to unshare
-        folder_path: String,
-        /// Email of the user to revoke access from
-        recipient_email: String,
-    },
+    #[command(about = "Show the current authenticated account")]
+    Whoami,
+    #[command(about = "Test authenticated access")]
+    Test,
 }
-
 #[derive(Serialize, Deserialize)]
-struct DeviceAuthRequest {
-    client_id: String,
+#[serde(rename_all = "camelCase")]
+struct Project {
+    server: String,
+    organization_id: String,
+    folder_id: String,
 }
-
+#[derive(Serialize, Deserialize)]
+struct Credentials {
+    access_token: String,
+    private_key: String,
+    device_id: String,
+    expires_at: u64,
+}
+impl Drop for Credentials {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.access_token.zeroize();
+        self.private_key.zeroize();
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Folder {
+    id: String,
+    parent_id: Option<String>,
+    name: String,
+    wrapped_key: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Secret {
+    id: String,
+    folder_id: String,
+    name: String,
+    encrypted_value: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Envelope {
+    recipient: String,
+    wrapped_key: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Snapshot {
+    organization_id: String,
+    epoch: u64,
+    revision: u64,
+    rotation_required: bool,
+    role: String,
+    folders: Vec<Folder>,
+    secrets: Vec<Secret>,
+    envelopes: Vec<Envelope>,
+}
 #[derive(Deserialize)]
-struct DeviceAuthResponse {
+struct DeviceCode {
     device_code: String,
     user_code: String,
-    verification_uri: String,
-    verification_uri_complete: Option<String>,
     expires_in: u64,
     interval: u64,
 }
-
-#[derive(Serialize)]
-struct DeviceVerifyRequest {
-    grant_type: String,
-    device_code: String,
-    client_id: String,
-}
-
-#[derive(Deserialize)]
-struct DeviceVerifyResponse {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: u64,
-}
-
-#[derive(Deserialize)]
-struct DeviceErrorResponse {
-    error: String,
-    error_description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct TokenStorage {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_at: Option<u64>, // Unix timestamp
-}
-
-#[derive(Deserialize, Serialize)]
-struct User {
-    email: String,
-    id: String,
-    name: String,
-}
-
-struct GitInfo {
-    repo: String,
-    org: String,
-    branch: String,
-}
-
-#[derive(Deserialize)]
-struct TestApiResponse {
-    success: bool,
-    message: Option<String>,
-    user: Option<User>,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct PushRequest {
-    #[serde(rename = "vaultPath")]
-    vault_path: String,
-    envs: HashMap<String, String>,
-}
-
-#[derive(Deserialize)]
-struct PushResponse {
-    success: bool,
-    message: Option<String>,
-    #[serde(rename = "successCount")]
-    success_count: Option<u32>,
-    #[serde(rename = "errorCount")]
-    error_count: Option<u32>,
-    errors: Option<Vec<String>>,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct PullRequest {
-    #[serde(rename = "vaultPath")]
-    vault_path: String,
-}
-
-#[derive(Deserialize)]
-struct PullResponse {
-    success: bool,
-    message: Option<String>,
-    envs: Option<HashMap<String, String>>,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct DeleteResponse {
-    success: bool,
-    message: Option<String>,
-    #[serde(rename = "deletedCount")]
-    deleted_count: Option<u32>,
-    #[serde(rename = "errorCount")]
-    error_count: Option<u32>,
-    errors: Option<Vec<String>>,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TreeEntry {
-    #[serde(rename = "type")]
-    entry_type: String,
-    name: String,
-    children: Option<Vec<TreeEntry>>,
-}
-
-#[derive(Deserialize)]
-struct ListResponse {
-    success: bool,
-    tree: Option<Vec<TreeEntry>>,
-    count: Option<u32>,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ShareResponse {
-    success: bool,
-    message: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ShareInfo {
-    id: String,
-    folder_path: String,
-    permission: String,
-    #[serde(rename = "sharedBy")]
-    shared_by: Option<ShareUser>,
-    #[serde(rename = "sharedWith")]
-    shared_with: Option<ShareUser>,
-    #[serde(rename = "createdAt")]
-    created_at: String,
-    #[serde(rename = "expiresAt")]
-    expires_at: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ShareUser {
-    email: String,
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct SharesResponse {
-    success: bool,
-    shares: Option<Vec<ShareInfo>>,
-    error: Option<String>,
-}
-
-// Helper functions
-
 fn get_voe_dir() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_default());
-    PathBuf::from(home).join(".voe")
+    PathBuf::from(
+        env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .unwrap_or_default(),
+    )
+    .join(".voe")
 }
-
-fn get_token_path() -> PathBuf {
-    get_voe_dir().join("token.json")
-}
-
-fn load_token() -> Option<TokenStorage> {
-    let path = get_token_path();
-    if !path.exists() {
-        return None;
-    }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<TokenStorage>(&content).ok())
-        .filter(|token| {
-            if let Some(expires_at) = token.expires_at {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                now < expires_at
-            } else {
-                true
-            }
-        })
-}
-
-fn save_token(token: &TokenStorage) -> Result<(), Box<dyn std::error::Error>> {
-    let path = get_token_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(token)?;
-    fs::write(&path, json)?;
-    Ok(())
-}
-
-async fn authenticate_device(base_url: &str) -> Result<TokenStorage, Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let device_req = DeviceAuthRequest {
-        client_id: "voe-cli".to_string(),
-    };
-
-    let response: DeviceAuthResponse = client
-        .post(&format!("{}/api/auth/device/code", base_url))
-        .json(&device_req)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let verification_url = format!("{}/device?user_code={}", base_url, response.user_code);
-    println!("🔐 Device Authorization Required");
-    println!("Please visit: {}", verification_url);
-    println!("Enter code: {}", response.user_code);
-    println!("Waiting for authorization...");
-
-    let verify_req = DeviceVerifyRequest {
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code".to_string(),
-        device_code: response.device_code.clone(),
-        client_id: "voe-cli".to_string(),
-    };
-
-    let mut polling_interval = response.interval;
-    loop {
-        sleep(Duration::from_secs(polling_interval)).await;
-        let verify_response = client
-            .post(&format!("{}/api/auth/device/token", base_url))
-            .json(&verify_req)
-            .send()
-            .await?;
-
-        if verify_response.status().is_success() {
-            let tokens: DeviceVerifyResponse = verify_response.json().await?;
-            println!("✅ Authorization successful!");
-            let expires_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + tokens.expires_in;
-            return Ok(TokenStorage {
-                access_token: tokens.access_token,
-                refresh_token: tokens.refresh_token,
-                expires_at: Some(expires_at),
-            });
-        } else if verify_response.status() == 400 {
-            if let Ok(error_data) = verify_response.json::<DeviceErrorResponse>().await {
-                match error_data.error.as_str() {
-                    "authorization_pending" => continue,
-                    "slow_down" => {
-                        polling_interval += 5;
-                        println!("⚠️  Slowing down polling to {}s", polling_interval);
-                        continue;
-                    }
-                    "access_denied" => return Err("Access was denied by the user".into()),
-                    "expired_token" => {
-                        return Err("The device code has expired. Please try again.".into())
-                    }
-                    _ => {
-                        return Err(format!(
-                            "Authorization failed: {}",
-                            error_data.error_description.unwrap_or(error_data.error)
-                        )
-                        .into())
-                    }
-                }
-            }
-        } else {
-            let error_text = verify_response.text().await?;
-            return Err(format!("Authorization failed: {}", error_text).into());
-        }
-    }
-}
-
-async fn get_or_authenticate_token() -> Result<TokenStorage, Box<dyn std::error::Error>> {
-    if let Some(token) = load_token() {
-        return Ok(token);
-    }
-    println!("🔑 No valid token found, starting authentication...");
-    let base_url = get_base_url();
-    let token = authenticate_device(&base_url).await?;
-    save_token(&token)?;
-    println!("💾 Token saved for future use");
-    Ok(token)
-}
-
 fn get_base_url() -> String {
     env::var("VOE_BASE_URL")
         .ok()
-        .filter(|url| !url.trim().is_empty())
         .or_else(|| fs::read_to_string(get_voe_dir().join("server-url")).ok())
-        .map(|url| url.trim().trim_end_matches('/').to_string())
-        .filter(|url| !url.is_empty())
-        .unwrap_or_else(|| "https://env.voe.dk".to_string())
+        .unwrap_or_else(|| "https://env.voe.dk".into())
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+fn validate_server(value: &str) -> Result<String> {
+    let url = reqwest::Url::parse(value)?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if (url.scheme() != "https" && !(url.scheme() == "http" && local))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err("Use an HTTPS server origin (HTTP is allowed only for localhost)".into());
+    }
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+fn project() -> Result<Project> {
+    let mut p: Project = serde_json::from_str(
+        &fs::read_to_string(".voe.json")
+            .map_err(|_| "Run ve init --org <organization-id> --path <folder:path> first")?,
+    )?;
+    p.server = validate_server(&p.server)?;
+    Ok(p)
+}
+fn credential_entry(server: &str) -> Result<keyring::Entry> {
+    Ok(keyring::Entry::new("voe-cli", server)?)
+}
+fn credentials(server: &str) -> Result<Credentials> {
+    let stored = Zeroizing::new(credential_entry(server)?.get_password().map_err(|_| {
+        "No credential-store entry. Run ve auth for this server. No plaintext fallback is used."
+    })?);
+    let credentials: Credentials = serde_json::from_str(&stored)?;
+    if credentials.expires_at <= now() {
+        return Err("CLI session expired. Run ve auth again".into());
+    }
+    Ok(credentials)
+}
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+fn client() -> Result<Client> {
+    Ok(Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?)
+}
+async fn request(
+    server: &str,
+    credentials: &Credentials,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value> {
+    let request = client()?
+        .request(
+            if body.is_some() {
+                Method::POST
+            } else {
+                Method::GET
+            },
+            format!("{server}{path}"),
+        )
+        .bearer_auth(&credentials.access_token);
+    let request = if let Some(body) = body {
+        request.json(&body)
+    } else {
+        request
+    };
+    let response = request.send().await?;
+    let status = response.status();
+    let value: Value = response.json().await?;
+    if !status.is_success() {
+        return Err(format!(
+            "{}: {}",
+            status,
+            value
+                .get("message")
+                .or_else(|| value.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("Request failed")
+        )
+        .into());
+    }
+    Ok(value)
+}
+async fn authenticate() -> Result<()> {
+    let server = validate_server(&get_base_url())?;
+    let entry = credential_entry(&server)?;
+    let (public, private) = crypto::generate_identity()?;
+    let code: DeviceCode = client()?
+        .post(format!("{server}/api/auth/device/code"))
+        .json(&json!({"client_id":"voe-cli"}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let enrolled: Value = client()?
+        .post(format!("{server}/api/devices"))
+        .json(&json!({"action":"enroll","deviceCode":code.device_code,"publicKey":public}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let device_id = enrolled["id"]
+        .as_str()
+        .ok_or("Missing enrollment ID")?
+        .to_string();
+    println!("Open {server}/device?user_code={}\nCode: {}\nDevice fingerprint: {}\nVerify this fingerprint in your browser and select workspace access.",code.user_code,code.user_code,crypto::fingerprint(&public)?);
+    let deadline = Instant::now() + Duration::from_secs(code.expires_in);
+    let mut interval = code.interval.max(1);
+    while Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        let response=client()?.post(format!("{server}/api/auth/device/token")).json(&json!({"grant_type":"urn:ietf:params:oauth:grant-type:device_code","device_code":code.device_code,"client_id":"voe-cli"})).send().await?;
+        let success = response.status().is_success();
+        let value: Value = response.json().await?;
+        if success {
+            let credentials = Credentials {
+                access_token: value["access_token"]
+                    .as_str()
+                    .ok_or("Missing session token")?
+                    .into(),
+                private_key: private.to_string(),
+                device_id,
+                expires_at: now()
+                    + value["expires_in"]
+                        .as_u64()
+                        .ok_or("Missing session expiry")?,
+            };
+            let serialized = Zeroizing::new(serde_json::to_string(&credentials)?);
+            entry.set_password(&serialized).map_err(|e| {
+                format!("Could not store credentials in the OS credential store: {e}")
+            })?;
+            println!("Device enrolled. Credentials are stored in your OS credential store.");
+            return Ok(());
+        }
+        match value["error"].as_str() {
+            Some("authorization_pending") => {}
+            Some("slow_down") => interval += 5,
+            _ => {
+                return Err(value["error_description"]
+                    .as_str()
+                    .unwrap_or("Device authorization failed")
+                    .into())
+            }
+        }
+    }
+    Err("Device authorization expired. Run ve auth again".into())
+}
+async fn snapshot(project: &Project, credentials: &Credentials) -> Result<Snapshot> {
+    Ok(serde_json::from_value(
+        request(
+            &project.server,
+            credentials,
+            &format!("/api/workspaces/{}", project.organization_id),
+            None,
+        )
+        .await?,
+    )?)
+}
+fn path(folders: &[Folder], id: &str) -> Result<String> {
+    let mut parts = Vec::new();
+    let mut current = Some(id);
+    let mut count = 0;
+    while let Some(id) = current {
+        count += 1;
+        if count > 64 {
+            return Err("Invalid folder tree".into());
+        }
+        let folder = folders
+            .iter()
+            .find(|f| f.id == id)
+            .ok_or("Folder not found")?;
+        if folder.parent_id.is_some() {
+            parts.push(folder.name.clone());
+        }
+        current = folder.parent_id.as_deref();
+    }
+    parts.reverse();
+    Ok(parts.join(":"))
+}
+fn folder_key(
+    snapshot: &Snapshot,
+    credentials: &Credentials,
+    id: &str,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let recipient = format!("device:{}", credentials.device_id);
+    let envelope = snapshot
+        .envelopes
+        .iter()
+        .find(|e| e.recipient == recipient)
+        .ok_or("No key envelope for this CLI. Run ve auth to enroll it.")?;
+    let org = crypto::unwrap(
+        &credentials.private_key,
+        &envelope.wrapped_key,
+        &context(json!([
+            "organization",
+            snapshot.organization_id,
+            recipient,
+            snapshot.epoch
+        ])),
+    )?;
+    let folder = snapshot
+        .folders
+        .iter()
+        .find(|f| f.id == id)
+        .ok_or("Project folder no longer exists")?;
+    unseal(
+        &org,
+        &folder.wrapped_key,
+        &context(json!([
+            "folder",
+            snapshot.organization_id,
+            id,
+            snapshot.epoch
+        ])),
+    )
+}
+fn remote_values(
+    snapshot: &Snapshot,
+    credentials: &Credentials,
+    folder: &str,
+) -> Result<BTreeMap<String, String>> {
+    let key = folder_key(snapshot, credentials, folder)?;
+    snapshot
+        .secrets
+        .iter()
+        .filter(|s| s.folder_id == folder)
+        .map(|s| {
+            let raw = unseal(
+                &key,
+                &s.encrypted_value,
+                &context(json!([
+                    "secret",
+                    snapshot.organization_id,
+                    folder,
+                    s.id,
+                    s.name,
+                    snapshot.epoch
+                ])),
+            )?;
+            Ok((s.name.clone(), String::from_utf8(raw.to_vec())?))
+        })
+        .collect()
+}
+fn local_values() -> Result<BTreeMap<String, String>> {
+    if !Path::new(".env").exists() {
+        return Ok(BTreeMap::new());
+    }
+    let mut values = BTreeMap::new();
+    for entry in dotenvy::from_path_iter(".env")? {
+        let (key, value) = entry?;
+        if key == "VE_VAULT_KEYPASS" {
+            continue;
+        }
+        if !regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")?.is_match(&key) {
+            return Err(format!("Invalid key: {key}").into());
+        }
+        if values.insert(key.clone(), value).is_some() {
+            return Err(format!("Duplicate key: {key}").into());
+        }
+    }
+    Ok(values)
+}
+fn env_content(values: &BTreeMap<String, String>) -> String {
+    let mut content = String::new();
+    for (key, value) in values {
+        let value = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('\n', "\\n");
+        content.push_str(&format!("{key}=\"{value}\"\n"));
+    }
+    content
+}
+fn write_env(values: &BTreeMap<String, String>) -> Result<()> {
+    let mut file = tempfile::NamedTempFile::new_in(".")?;
+    file.write_all(env_content(values).as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(".env")?;
+    Ok(())
+}
+async fn init(org: String, folder_path: String) -> Result<()> {
+    let server = validate_server(&get_base_url())?;
+    let credentials = credentials(&server)?;
+    let mut project = Project {
+        server,
+        organization_id: org,
+        folder_id: String::new(),
+    };
+    let snapshot = snapshot(&project, &credentials).await?;
+    let folder = snapshot
+        .folders
+        .iter()
+        .find(|f| path(&snapshot.folders, &f.id).ok().as_deref() == Some(folder_path.as_str()))
+        .ok_or("Folder not found. Create it in the workspace first.")?;
+    folder_key(&snapshot, &credentials, &folder.id)?;
+    project.folder_id = folder.id.clone();
+    let mut file = tempfile::NamedTempFile::new_in(".")?;
+    file.write_all(serde_json::to_string_pretty(&project)?.as_bytes())?;
+    file.persist(".voe.json")?;
+    println!("Project configured. .voe.json contains only server, organization, and folder IDs.");
+    Ok(())
+}
+async fn push(force: bool) -> Result<()> {
+    let project = project()?;
+    let credentials = credentials(&project.server)?;
+    let mut snapshot = snapshot(&project, &credentials).await?;
+    if snapshot.rotation_required {
+        return Err("Workspace key rotation is required. Open workspace settings.".into());
+    }
+    if snapshot.role == "viewer" {
+        return Err("Viewers cannot write secrets".into());
+    }
+    if !Path::new(".env").exists() {
+        return Err("No .env file to push".into());
+    }
+    let values = local_values()?;
+    let key = folder_key(&snapshot, &credentials, &project.folder_id)?;
+    if force {
+        snapshot
+            .secrets
+            .retain(|s| s.folder_id != project.folder_id || values.contains_key(&s.name));
+    }
+    for (name, value) in &values {
+        let id = snapshot
+            .secrets
+            .iter()
+            .find(|s| s.folder_id == project.folder_id && s.name == *name)
+            .map(|s| s.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let encrypted_value = seal(
+            &key,
+            value.as_bytes(),
+            &context(json!([
+                "secret",
+                snapshot.organization_id,
+                project.folder_id,
+                id,
+                name,
+                snapshot.epoch
+            ])),
+        )?;
+        snapshot.secrets.retain(|s| s.id != id);
+        snapshot.secrets.push(Secret {
+            id,
+            folder_id: project.folder_id.clone(),
+            name: name.clone(),
+            encrypted_value,
+        });
+    }
+    let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
+    request(
+        &project.server,
+        &credentials,
+        &format!("/api/workspaces/{}", project.organization_id),
+        Some(body),
+    )
+    .await?;
+    println!("Pushed {} encrypted secrets.", values.len());
+    Ok(())
+}
+async fn pull(force: bool) -> Result<()> {
+    let project = project()?;
+    let credentials = credentials(&project.server)?;
+    let snapshot = snapshot(&project, &credentials).await?;
+    let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;
+    let mut values = local_values()?;
+    if !force
+        && remote
+            .iter()
+            .any(|(k, v)| values.get(k).is_some_and(|old| old != v))
+    {
+        return Err(
+            "Local values differ. Use ve diff, then ve pull --force to replace .env.".into(),
+        );
+    }
+    if force {
+        values = remote;
+    } else {
+        values.extend(remote);
+    }
+    write_env(&values)?;
+    println!(
+        "Wrote {} secrets to .env (without a vault password).",
+        values.len()
+    );
+    Ok(())
+}
+async fn inspect(command: &Commands) -> Result<()> {
+    let project = project()?;
+    let credentials = credentials(&project.server)?;
+    let snapshot = snapshot(&project, &credentials).await?;
+    match command {
+        Commands::Diff => {
+            let local = local_values()?;
+            let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;
+            for key in local
+                .keys()
+                .chain(remote.keys())
+                .collect::<std::collections::BTreeSet<_>>()
+            {
+                let status = match (local.get(key), remote.get(key)) {
+                    (Some(a), Some(b)) if a == b => "same",
+                    (Some(_), Some(_)) => "changed",
+                    (Some(_), None) => "local only",
+                    _ => "remote only",
+                };
+                println!("{status}: {key}");
+            }
+        }
+        Commands::List => {
+            for folder in &snapshot.folders {
+                println!("{}/", path(&snapshot.folders, &folder.id)?);
+            }
+            for secret in &snapshot.secrets {
+                println!(
+                    "{}:{}",
+                    path(&snapshot.folders, &secret.folder_id)?,
+                    secret.name
+                );
+            }
+        }
+        Commands::Search { pattern } => {
+            for secret in snapshot
+                .secrets
+                .iter()
+                .filter(|s| s.name.to_lowercase().contains(&pattern.to_lowercase()))
+            {
+                println!(
+                    "{}:{}",
+                    path(&snapshot.folders, &secret.folder_id)?,
+                    secret.name
+                );
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Auth => authenticate().await,
+        Commands::Logout => {
+            credential_entry(&validate_server(&get_base_url())?)?.delete_credential()?;
+            println!("Local credentials removed. Revoke the device in workspace settings to remove server access.");
+            Ok(())
+        }
+        Commands::Update => cmd_update().await,
+        Commands::Init { org, path } => init(org, path).await,
+        Commands::Push { force } => push(force).await,
+        Commands::Pull { force } => pull(force).await,
+        Commands::Workspaces => {
+            let server = validate_server(&get_base_url())?;
+            let credentials = credentials(&server)?;
+            let workspaces = request(&server, &credentials, "/api/workspaces", None).await?;
+            for org in workspaces.as_array().ok_or("Invalid workspace response")? {
+                println!(
+                    "{}  {}  ({})",
+                    org["id"].as_str().unwrap_or(""),
+                    org["name"].as_str().unwrap_or(""),
+                    org["role"].as_str().unwrap_or("")
+                );
+            }
+            Ok(())
+        }
+        Commands::Whoami | Commands::Test => {
+            let server = validate_server(&get_base_url())?;
+            let credentials = credentials(&server)?;
+            let value = request(&server, &credentials, "/api/test", None).await?;
+            println!(
+                "{}",
+                value["user"]["email"].as_str().unwrap_or("Authenticated")
+            );
+            Ok(())
+        }
+        Commands::Validate => {
+            println!("{} valid environment variables.", local_values()?.len());
+            Ok(())
+        }
+        command => inspect(&command).await,
+    }
 }
 
-async fn cmd_update() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_insecure_servers() {
+        assert!(validate_server("http://example.com").is_err());
+        assert!(validate_server("https://user:pass@example.com").is_err());
+        assert!(validate_server("https://example.com/path").is_err());
+        assert!(validate_server("http://localhost:5173").is_ok());
+    }
+    #[test]
+    fn dotenv_round_trip() {
+        let values = BTreeMap::from([(
+            "TEST".into(),
+            "quotes \" slash \\ dollar ${HOME}\nsecond line\r".into(),
+        )]);
+        let encoded = env_content(&values);
+        let parsed: std::result::Result<BTreeMap<_, _>, _> =
+            dotenvy::from_read_iter(encoded.as_bytes()).collect();
+        assert_eq!(parsed.unwrap(), values);
+    }
+}
+async fn cmd_update() -> Result<()> {
     let (asset, header): (&str, &[u8]) = match (env::consts::OS, env::consts::ARCH) {
         ("macos", "x86_64") => ("ve-darwin-amd64", b"\xcf\xfa\xed\xfe"),
         ("macos", "aarch64") => ("ve-darwin-arm64", b"\xcf\xfa\xed\xfe"),
@@ -443,1211 +685,4 @@ async fn cmd_update() -> Result<(), Box<dyn std::error::Error>> {
     self_replace::self_replace(download.path())?;
     println!("Updated ve.");
     Ok(())
-}
-
-async fn make_authenticated_request<T: Serialize, R: for<'de> Deserialize<'de>>(
-    method: reqwest::Method,
-    url: &str,
-    body: Option<&T>,
-) -> Result<R, Box<dyn std::error::Error>> {
-    let mut token = get_or_authenticate_token().await?;
-    let client = Client::new();
-    let mut request = client
-        .request(method.clone(), url)
-        .header("Authorization", format!("Bearer {}", token.access_token));
-    if let Some(b) = body {
-        request = request.json(b);
-    }
-
-    let mut response = request.send().await?;
-    if response.status() == 401 {
-        println!("⚠️  Token validation failed, re-authenticating...");
-        let base_url = get_base_url();
-        token = authenticate_device(&base_url).await?;
-        save_token(&token)?;
-        let mut retry_request = client
-            .request(method, url)
-            .header("Authorization", format!("Bearer {}", token.access_token));
-        if let Some(b) = body {
-            retry_request = retry_request.json(b);
-        }
-        response = retry_request.send().await?;
-    }
-
-    if response.status().is_success() {
-        Ok(response.json().await?)
-    } else {
-        Err(format!("Request failed: {}", response.text().await?).into())
-    }
-}
-
-async fn test_api() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = get_base_url();
-    let api_response: TestApiResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/test", base_url),
-        None::<&()>,
-    )
-    .await?;
-    println!("✅ API Test Successful!");
-    if let Some(message) = api_response.message {
-        println!("   {}", message);
-    }
-    if let Some(user) = api_response.user {
-        println!("   User: {}", serde_json::to_string_pretty(&user)?);
-    }
-    Ok(())
-}
-
-fn derive_key(password: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
-    let salt = b"fixedsalt";
-    let mut key_bytes = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, 100000, &mut key_bytes);
-    Ok(key_bytes)
-}
-
-fn encrypt_value(text: &str, password: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let key_bytes = derive_key(password)?;
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|e| format!("Failed to create cipher: {}", e))?;
-    let nonce = Nonce::generate();
-    let ciphertext = cipher
-        .encrypt(&nonce, text.as_bytes())
-        .map_err(|e| format!("Encryption failed: {}", e))?;
-    let mut combined = nonce.to_vec();
-    combined.extend(ciphertext);
-    Ok(general_purpose::STANDARD.encode(&combined))
-}
-
-fn decrypt_value(
-    encrypted_text: &str,
-    password: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let key_bytes = derive_key(password)?;
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|e| format!("Failed to create cipher: {}", e))?;
-    let combined = general_purpose::STANDARD.decode(encrypted_text)?;
-    if combined.len() < 12 {
-        return Err("Invalid encrypted data: too short".into());
-    }
-    let nonce = &combined[..12];
-    let ciphertext = &combined[12..];
-    let plaintext = cipher
-        .decrypt(nonce.try_into()?, ciphertext)
-        .map_err(|e| format!("Decryption failed: {}", e))?;
-    String::from_utf8(plaintext)
-        .map_err(|e| format!("Invalid UTF-8 in decrypted data: {}", e).into())
-}
-
-fn parse_env_file(env_path: &Path) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let content = fs::read_to_string(env_path)?;
-    for line in content.lines() {
-        if line.starts_with("VE_VAULT_KEYPASS=") {
-            let value = line
-                .strip_prefix("VE_VAULT_KEYPASS=")
-                .unwrap_or("")
-                .split('#')
-                .next()
-                .unwrap_or("")
-                .split(';')
-                .next()
-                .unwrap_or("")
-                .trim();
-            let parts: Vec<&str> = if value.contains('+') {
-                value.split('+').collect()
-            } else {
-                value.split(';').collect()
-            };
-            if parts.len() >= 2 {
-                return Ok((parts[0].to_string(), parts[1].to_string()));
-            }
-        }
-    }
-    Err("VE_VAULT_KEYPASS not found in .env file. Run 've init' first.".into())
-}
-
-fn parse_env_vars(env_path: &Path) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
-    let file = fs::File::open(env_path)?;
-    let reader = BufReader::new(file);
-    let mut vars = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with("VE_VAULT_KEYPASS=") {
-            continue;
-        }
-        if let Some(equal_pos) = line.find('=') {
-            let key = line[..equal_pos].trim().to_string();
-            let value_str = line[equal_pos + 1..].trim();
-            let value = if value_str.starts_with('"') && value_str.ends_with('"') {
-                value_str[1..value_str.len() - 1].to_string()
-            } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
-                value_str[1..value_str.len() - 1].to_string()
-            } else {
-                value_str.to_string()
-            };
-            if !key.is_empty() {
-                vars.push((key, value));
-            }
-        }
-    }
-    Ok(vars)
-}
-
-fn format_env_content(
-    vault_path: &str,
-    vault_password: &str,
-    env_vars: &HashMap<String, String>,
-) -> String {
-    let mut content = format!(
-        "VE_VAULT_KEYPASS={}+{} # automatically added by vault\n\n",
-        vault_path, vault_password
-    );
-    let mut sorted_vars: Vec<_> = env_vars.iter().collect();
-    sorted_vars.sort_by(|a, b| a.0.cmp(b.0));
-    for (key, value) in sorted_vars {
-        content.push_str(&format!("{}={}\n", key, value));
-    }
-    content
-}
-
-fn write_env_file(
-    env_path: &Path,
-    vault_path: &str,
-    vault_password: &str,
-    env_vars: &HashMap<String, String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let content = format_env_content(vault_path, vault_password, env_vars);
-    fs::write(env_path, content)?;
-    Ok(())
-}
-
-fn update_env_example(
-    env_vars: &HashMap<String, String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = env::current_dir()?;
-    let example_path = current_dir.join(".env.example");
-    if !example_path.exists() {
-        return Ok(());
-    }
-    let existing_content = fs::read_to_string(&example_path)?;
-    let mut example_lines = Vec::new();
-    let mut existing_keys = std::collections::HashSet::new();
-    for line in existing_content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            example_lines.push(line.to_string());
-        } else if trimmed.starts_with('#') {
-            example_lines.push(line.to_string());
-        } else if let Some(equal_pos) = trimmed.find('=') {
-            let key = trimmed[..equal_pos].trim().to_string();
-            existing_keys.insert(key.clone());
-            example_lines.push(format!("{}=xxx", key));
-        } else {
-            example_lines.push(line.to_string());
-        }
-    }
-    let mut new_keys: Vec<String> = env_vars
-        .keys()
-        .filter(|k| !existing_keys.contains(*k))
-        .cloned()
-        .collect();
-    new_keys.sort();
-    if !new_keys.is_empty() {
-        if !example_lines.is_empty() && !example_lines.last().unwrap().is_empty() {
-            example_lines.push(String::new());
-        }
-        for key in new_keys {
-            example_lines.push(format!("{}=xxx", key));
-        }
-    }
-    let new_content = example_lines.join("\n");
-    fs::write(&example_path, new_content)?;
-    Ok(())
-}
-
-fn get_env_path() -> PathBuf {
-    env::current_dir().unwrap().join(".env")
-}
-
-fn prompt_input(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
-fn read_password() -> Result<String, Box<dyn std::error::Error>> {
-    rpassword::read_password().map_err(|e| e.into())
-}
-
-fn encrypt_env_vars(
-    env_vars: &[(String, String)],
-    password: &str,
-) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-    let mut encrypted = HashMap::new();
-    for (key, value) in env_vars {
-        encrypted.insert(key.clone(), encrypt_value(value, password)?);
-    }
-    Ok(encrypted)
-}
-
-fn decrypt_env_vars(
-    encrypted_envs: &HashMap<String, String>,
-    password: &str,
-) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-    let mut decrypted = HashMap::new();
-    for (key, encrypted_value) in encrypted_envs {
-        decrypted.insert(key.clone(), decrypt_value(encrypted_value, password)?);
-    }
-    Ok(decrypted)
-}
-
-// Command functions
-
-async fn cmd_auth() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔑 Starting authentication...");
-    let base_url = get_base_url();
-    let token = authenticate_device(&base_url).await?;
-    save_token(&token)?;
-    println!("💾 Token saved for future use");
-    Ok(())
-}
-
-async fn cmd_test() -> Result<(), Box<dyn std::error::Error>> {
-    test_api().await
-}
-
-fn cmd_init(
-    path: Option<String>,
-    password: Option<String>,
-    git: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    if env_path.exists() {
-        let content = fs::read_to_string(&env_path)?;
-        if content.contains("VE_VAULT_KEYPASS=") {
-            println!("ℹ️  This project already contains VOE configuration.");
-            return Ok(());
-        }
-    }
-
-    let git_info = if git {
-        get_git_info_on_path(&env::current_dir().unwrap())
-    } else {
-        GitInfo {
-            org: String::new(),
-            repo: String::new(),
-            branch: String::new(),
-        }
-    };
-
-    let vault_path = if git {
-        format!("{}:{}:{}", git_info.org, git_info.repo, git_info.branch)
-    } else {
-        path.unwrap_or_else(|| prompt_input("Enter vault path (e.g., org:product:dev): ").unwrap())
-    };
-    if vault_path.is_empty() {
-        return Err("Vault path cannot be empty".into());
-    }
-
-    println!("🔒 Set vault password/lock:");
-    let vault_password = password.unwrap_or_else(|| read_password().unwrap());
-    if vault_password.is_empty() {
-        return Err("Vault password cannot be empty".into());
-    }
-
-    let existing_vars = if env_path.exists() {
-        parse_env_vars(&env_path).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let env_vars: HashMap<String, String> = existing_vars.into_iter().collect();
-
-    write_env_file(&env_path, &vault_path, &vault_password, &env_vars)?;
-    update_env_example(&env_vars)?;
-
-    println!("✅ VOE initialized successfully!");
-    println!("   Vault path: {}", vault_path);
-    Ok(())
-}
-
-fn get_git_info_on_path(path: &PathBuf) -> GitInfo {
-    // Get remote URL
-    let url_output = Command::new("git")
-        .arg("config")
-        .arg("--get")
-        .arg("remote.origin.url")
-        .current_dir(path)
-        .output()
-        .expect("Failed to run git config command");
-
-    if !url_output.status.success() {
-        panic!("Failed to get git remote URL. Ensure you are in a git repository with a remote origin set.");
-    }
-
-    let url = String::from_utf8_lossy(&url_output.stdout)
-        .trim()
-        .to_string();
-    if url.is_empty() {
-        panic!("Git remote URL is empty. Ensure remote origin is configured.");
-    }
-
-    // Parse org and repo from URL
-    if !url.contains("github.com") {
-        panic!(
-            "Only GitHub repositories are supported. Remote URL: {}",
-            url
-        );
-    }
-
-    let (org, repo) = if url.contains("https://") {
-        // https://github.com/org/repo.git
-        let parts: Vec<&str> = url.split('/').collect();
-        if parts.len() < 3 {
-            panic!("Invalid GitHub HTTPS URL format: {}", url);
-        }
-        let org = parts[parts.len() - 2].to_string();
-        let repo_with_git = parts.last().unwrap();
-        let repo = repo_with_git
-            .strip_suffix(".git")
-            .unwrap_or(repo_with_git)
-            .to_string();
-        (org, repo)
-    } else if url.contains('@') {
-        // git@github.com:org/repo.git
-        let after_colon = url.split(':').nth(1).expect("Invalid SSH URL format");
-        let parts: Vec<&str> = after_colon.split('/').collect();
-        if parts.len() < 2 {
-            panic!("Invalid GitHub SSH URL format: {}", url);
-        }
-        let org = parts[0].to_string();
-        let repo_with_git = parts[1];
-        let repo = repo_with_git
-            .strip_suffix(".git")
-            .unwrap_or(repo_with_git)
-            .to_string();
-        (org, repo)
-    } else {
-        panic!("Unsupported GitHub URL format: {}", url);
-    };
-
-    // Get current branch
-    let branch_output = Command::new("git")
-        .arg("branch")
-        .arg("--show-current")
-        .current_dir(path)
-        .output()
-        .expect("Failed to run git branch command");
-
-    if !branch_output.status.success() {
-        panic!("Failed to get current git branch. Ensure you are on a valid branch.");
-    }
-
-    let branch = String::from_utf8_lossy(&branch_output.stdout)
-        .trim()
-        .to_string();
-    if branch.is_empty() {
-        panic!("Current branch is empty. Ensure you are on a valid branch.");
-    }
-
-    GitInfo { repo, org, branch }
-}
-
-async fn cmd_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    if !env_path.exists() {
-        return Err(".env file not found. Run 've init' first.".into());
-    }
-
-    let (vault_path, vault_password) = parse_env_file(&env_path)?;
-    let env_vars = parse_env_vars(&env_path)?;
-    if env_vars.is_empty() {
-        return Err("No environment variables found in .env file.".into());
-    }
-
-    if force {
-        handle_force_push(&vault_path, &vault_password, &env_vars).await?;
-    }
-
-    println!(
-        "🔐 Encrypting {} environment variable(s)...",
-        env_vars.len()
-    );
-    let encrypted_envs = encrypt_env_vars(&env_vars, &vault_password)?;
-    if encrypted_envs.is_empty() {
-        return Err("Failed to encrypt any environment variables.".into());
-    }
-
-    println!("📤 Uploading to vault: {}", vault_path);
-    let request = PushRequest {
-        vault_path,
-        envs: encrypted_envs,
-    };
-    let base_url = get_base_url();
-    let response: PushResponse = make_authenticated_request(
-        reqwest::Method::POST,
-        &format!("{}/api/vault/push", base_url),
-        Some(&request),
-    )
-    .await?;
-
-    println!(
-        "✅ {}",
-        response
-            .message
-            .unwrap_or_else(|| "Upload successful!".to_string())
-    );
-    if let Some(success_count) = response.success_count {
-        println!("   Successfully uploaded: {} variable(s)", success_count);
-    }
-    if let Some(error_count) = response.error_count {
-        if error_count > 0 {
-            println!("   Errors: {} variable(s)", error_count);
-            if let Some(errors) = response.errors {
-                for error in errors {
-                    println!("     - {}", error);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn handle_force_push(
-    vault_path: &str,
-    vault_password: &str,
-    local_vars: &[(String, String)],
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔍 Checking for variables to delete on server...");
-    let base_url = get_base_url();
-    let response: PullResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/pull?vaultPath={}", base_url, vault_path),
-        None::<&PullRequest>,
-    )
-    .await?;
-
-    if let Some(encrypted_server_envs) = response.envs {
-        let server_vars = decrypt_env_vars(&encrypted_server_envs, vault_password)?;
-        let local_keys: std::collections::HashSet<String> =
-            local_vars.iter().map(|(k, _)| k.clone()).collect();
-        let keys_to_delete: Vec<String> = server_vars
-            .keys()
-            .filter(|k| !local_keys.contains(*k))
-            .cloned()
-            .collect();
-
-        if !keys_to_delete.is_empty() {
-            println!("⚠️  Force mode: The following variables will be permanently deleted from the server:");
-            for key in &keys_to_delete {
-                println!("   - {}", key);
-            }
-            println!();
-            if !prompt_input("This action is immediate and cannot be undone. Continue? (y/N): ")?
-                .to_lowercase()
-                .starts_with('y')
-            {
-                return Err("Operation cancelled.".into());
-            }
-
-            let delete_request =
-                serde_json::json!({ "vaultPath": vault_path, "keys": keys_to_delete });
-            let _: serde_json::Value = make_authenticated_request(
-                reqwest::Method::DELETE,
-                &format!("{}/api/vault/delete", base_url),
-                Some(&delete_request),
-            )
-            .await?;
-            println!("🗑️  Deleted variable(s) from server");
-        } else {
-            println!("✅ No variables to delete on server");
-        }
-    }
-    Ok(())
-}
-
-async fn cmd_pull(
-    force: bool,
-    path: Option<String>,
-    password: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    if !env_path.exists() {
-        if let (Some(vault_path), Some(vault_password)) = (path, password) {
-            cmd_init(Some(vault_path), Some(vault_password), false)?;
-        } else {
-            return Err(
-                ".env file not found. Run 've init' first or provide -p and -P to initialize."
-                    .into(),
-            );
-        }
-    }
-
-    let (vault_path, vault_password) = parse_env_file(&env_path)?;
-    println!("📥 Pulling from vault: {}", vault_path);
-
-    let base_url = get_base_url();
-    let response: PullResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/pull?vaultPath={}", base_url, vault_path),
-        None::<&PullRequest>,
-    )
-    .await?;
-
-    if let Some(encrypted_envs) = response.envs {
-        println!(
-            "🔓 Decrypting {} environment variable(s)...",
-            encrypted_envs.len()
-        );
-        let decrypted_envs = decrypt_env_vars(&encrypted_envs, &vault_password)?;
-
-        let local_vars = parse_env_vars(&env_path).unwrap_or_default();
-        let final_vars = if force {
-            println!("⚠️  Force mode: replacing local .env with server version");
-            decrypted_envs
-        } else {
-            println!("🔄 Update mode: merging with local .env");
-            let mut merged: HashMap<String, String> = local_vars.into_iter().collect();
-            merged.extend(decrypted_envs);
-            merged
-        };
-
-        write_env_file(&env_path, &vault_path, &vault_password, &final_vars)?;
-        update_env_example(&final_vars)?;
-        println!("✅ Pulled {} variable(s) from vault", final_vars.len());
-        Ok(())
-    } else {
-        Err("No environment variables received from server".into())
-    }
-}
-
-async fn cmd_change_password(
-    new_password: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    if !env_path.exists() {
-        return Err(".env file not found. Run 've init' first.".into());
-    }
-
-    let (vault_path, current_password) = parse_env_file(&env_path)?;
-    let local_vars_vec = parse_env_vars(&env_path)?;
-    if local_vars_vec.is_empty() {
-        return Err("No environment variables found in .env file.".into());
-    }
-
-    println!("🔐 Checking vault synchronization: {}", vault_path);
-    let base_url = get_base_url();
-    let response: PullResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/pull?vaultPath={}", base_url, vault_path),
-        None::<&PullRequest>,
-    )
-    .await?;
-
-    if let Some(encrypted_envs) = response.envs {
-        let server_vars = decrypt_env_vars(&encrypted_envs, &current_password)?;
-        let local_map: HashMap<String, String> = local_vars_vec.iter().cloned().collect();
-        if local_map != server_vars {
-            return Err("Local and server environments are not identical. Please sync before changing password.".into());
-        }
-
-        println!("✅ Environments are synchronized");
-        let new_password = new_password.unwrap_or_else(|| read_password().unwrap());
-        if new_password.is_empty() {
-            return Err("New password cannot be empty".into());
-        }
-
-        println!("🔐 Re-encrypting with new password...");
-        let re_encrypted_envs = encrypt_env_vars(&local_vars_vec, &new_password)?;
-
-        write_env_file(&env_path, &vault_path, &new_password, &local_map)?;
-        update_env_example(&local_map)?;
-
-        println!("📤 Uploading with new encryption...");
-        let request = PushRequest {
-            vault_path,
-            envs: re_encrypted_envs,
-        };
-        let _: PushResponse = make_authenticated_request(
-            reqwest::Method::POST,
-            &format!("{}/api/vault/push", base_url),
-            Some(&request),
-        )
-        .await?;
-
-        println!("✅ Password changed successfully!");
-        Ok(())
-    } else {
-        Err("No environment variables found on server".into())
-    }
-}
-
-async fn cmd_whoami() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = get_base_url();
-    let api_response: TestApiResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/test", base_url),
-        None::<&()>,
-    )
-    .await?;
-    if let Some(user) = api_response.user {
-        println!("Current User Info:");
-        println!("✉  User Email {}", user.email);
-        println!("👤 User Name: {}", user.name);
-    } else {
-        eprintln!("Failed to retrieve user info.");
-    }
-    Ok(())
-}
-
-fn print_tree(entries: &[TreeEntry], prefix: &str, is_last_stack: &[bool]) {
-    for (i, entry) in entries.iter().enumerate() {
-        let is_last = i == entries.len() - 1;
-        let connector = if is_last { "└── " } else { "├── " };
-        let icon = if entry.entry_type == "folder" { "📁" } else { "🔑" };
-        let full_prefix = if is_last_stack.is_empty() {
-            format!("{}{}", prefix, connector)
-        } else {
-            let parent_prefix: String = is_last_stack
-                .iter()
-                .map(|&last| if last { "    " } else { "│   " })
-                .collect();
-            format!("{}{}{}", parent_prefix, prefix, connector)
-        };
-        println!("{}{} {}", full_prefix, icon, entry.name);
-        if let Some(children) = &entry.children {
-            let mut new_stack = is_last_stack.to_vec();
-            new_stack.push(is_last);
-            print_tree(children, "", &new_stack);
-        }
-    }
-}
-
-async fn cmd_list() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = get_base_url();
-    let response: ListResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/list", base_url),
-        None::<&()>,
-    )
-    .await?;
-
-    if let Some(error) = response.error {
-        return Err(format!("List failed: {}", error).into());
-    }
-
-    if let Some(tree) = response.tree {
-        if tree.is_empty() {
-            println!("📂 No vaults found.");
-        } else {
-            let count = response.count.unwrap_or(0);
-            println!("📂 Vault Structure ({} total keys):", count);
-            println!();
-            print_tree(&tree, "", &[]);
-        }
-    } else {
-        println!("📂 No vaults found.");
-    }
-    Ok(())
-}
-
-async fn cmd_diff() -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    if !env_path.exists() {
-        return Err(".env file not found. Run 've init' first.".into());
-    }
-
-    let (vault_path, vault_password) = parse_env_file(&env_path)?;
-    let local_vars_vec = parse_env_vars(&env_path)?;
-    let local_vars: HashMap<String, String> = local_vars_vec.into_iter().collect();
-
-    println!("🔍 Comparing local .env with server vault: {}", vault_path);
-
-    let base_url = get_base_url();
-    let response: PullResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/pull?vaultPath={}", base_url, vault_path),
-        None::<&PullRequest>,
-    )
-    .await?;
-
-    if let Some(encrypted_envs) = response.envs {
-        let server_vars = decrypt_env_vars(&encrypted_envs, &vault_password)?;
-
-        let local_keys: std::collections::HashSet<_> = local_vars.keys().cloned().collect();
-        let server_keys: std::collections::HashSet<_> = server_vars.keys().cloned().collect();
-
-        let local_only: Vec<_> = local_keys.difference(&server_keys).collect();
-        let server_only: Vec<_> = server_keys.difference(&local_keys).collect();
-        let common_keys: Vec<_> = local_keys.intersection(&server_keys).collect();
-
-        let mut differing: Vec<&str> = Vec::new();
-        for key in &common_keys {
-            if local_vars.get(*key) != server_vars.get(*key) {
-                differing.push(*key);
-            }
-        }
-
-        let has_differences = !local_only.is_empty() || !server_only.is_empty() || !differing.is_empty();
-
-        if !has_differences {
-            println!("✅ Local and server are in sync!");
-            println!("   {} variable(s) match", local_vars.len());
-        } else {
-            println!();
-
-            if !local_only.is_empty() {
-                println!("📥 Local only ({}):", local_only.len());
-                for key in &local_only {
-                    println!("   + {}", key);
-                }
-                println!();
-            }
-
-            if !server_only.is_empty() {
-                println!("📤 Server only ({}):", server_only.len());
-                for key in &server_only {
-                    println!("   - {}", key);
-                }
-                println!();
-            }
-
-            if !differing.is_empty() {
-                println!("⚠️  Different values ({}):", differing.len());
-                for key in &differing {
-                    println!("   ~ {}", key);
-                }
-                println!();
-            }
-
-            println!("💡 Run 've push' to upload local changes");
-            println!("   Run 've pull' to download server changes");
-        }
-
-        Ok(())
-    } else {
-        Err("No environment variables found on server".into())
-    }
-}
-
-async fn cmd_search(pattern: String) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔍 Searching for keys matching: {}", pattern);
-
-    let base_url = get_base_url();
-    let response: ListResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/vault/list", base_url),
-        None::<&()>,
-    )
-    .await?;
-
-    if let Some(error) = response.error {
-        return Err(format!("Search failed: {}", error).into());
-    }
-
-    if let Some(tree) = response.tree {
-        let pattern_lower = pattern.to_lowercase();
-        let mut matches: Vec<(String, String)> = Vec::new();
-
-        fn search_tree(
-            entries: &[TreeEntry],
-            current_path: &str,
-            pattern: &str,
-            matches: &mut Vec<(String, String)>,
-        ) {
-            for entry in entries {
-                let full_path = if current_path.is_empty() {
-                    entry.name.clone()
-                } else {
-                    format!("{}:{}", current_path, entry.name)
-                };
-
-                if entry.name.to_lowercase().contains(pattern) {
-                    matches.push((full_path.clone(), entry.entry_type.clone()));
-                }
-
-                if let Some(children) = &entry.children {
-                    search_tree(children, &full_path, pattern, matches);
-                }
-            }
-        }
-
-        search_tree(&tree, "", &pattern_lower, &mut matches);
-
-        if matches.is_empty() {
-            println!("❌ No matches found for '{}'", pattern);
-        } else {
-            println!("✅ Found {} match(es):", matches.len());
-            println!();
-
-            for (path, entry_type) in matches {
-                let icon = if entry_type == "folder" { "📁" } else { "🔑" };
-                println!("   {} {}", icon, path);
-            }
-        }
-    } else {
-        println!("📂 No vaults found.");
-    }
-
-    Ok(())
-}
-
-fn cmd_validate() -> Result<(), Box<dyn std::error::Error>> {
-    let env_path = get_env_path();
-    
-    if !env_path.exists() {
-        return Err(".env file not found. Run 've init' first.".into());
-    }
-
-    println!("🔍 Validating .env file...");
-    println!();
-
-    let content = fs::read_to_string(&env_path)?;
-    let lines: Vec<&str> = content.lines().collect();
-    
-    let mut issues: Vec<(usize, String, String)> = Vec::new();
-    let mut seen_keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut has_ve_vault = false;
-    let mut key_count = 0;
-
-    for (idx, line) in lines.iter().enumerate() {
-        let line_num = idx + 1;
-        let trimmed = line.trim();
-
-        // Skip empty lines and comments
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        // Check for VE_VAULT_KEYPASS
-        if trimmed.starts_with("VE_VAULT_KEYPASS=") {
-            has_ve_vault = true;
-            continue;
-        }
-
-        // Check if line looks like a key=value pair
-        if let Some(equal_pos) = trimmed.find('=') {
-            let key = &trimmed[..equal_pos].trim();
-            let value = &trimmed[equal_pos + 1..].trim();
-
-            // Validate key
-            if key.is_empty() {
-                issues.push((line_num, "❌".to_string(), "Empty key name".to_string()));
-                continue;
-            }
-
-            // Check for spaces in key
-            if key.contains(' ') {
-                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' contains spaces", key)));
-            }
-
-            // Check for invalid characters in key
-            let valid_key_regex = regex::Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
-            if !valid_key_regex.is_match(key) {
-                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' has invalid characters", key)));
-            }
-
-            // Check for duplicates
-            if let Some(&first_line) = seen_keys.get(*key) {
-                issues.push((line_num, "❌".to_string(), format!("Duplicate key '{}' (first defined on line {})", key, first_line)));
-            } else {
-                seen_keys.insert(key.to_string(), line_num);
-                key_count += 1;
-            }
-
-            // Check for empty value
-            if value.is_empty() {
-                issues.push((line_num, "⚠️".to_string(), format!("Key '{}' has empty value", key)));
-            }
-
-            // Check for unclosed quotes
-            if (value.starts_with('"') && !value.ends_with('"')) ||
-               (value.starts_with('\'') && !value.ends_with('\'')) {
-                issues.push((line_num, "❌".to_string(), format!("Key '{}' has unclosed quotes", key)));
-            }
-
-            // Check for spaces around equals (styling issue)
-            if line.contains(" =") || line.contains("= ") {
-                if !line.trim().starts_with('#') {
-                    // Only flag if it's not part of the value
-                    let before_eq = &line[..line.find('=').unwrap_or(0)];
-                    let after_eq = &line[line.find('=').unwrap_or(0) + 1..];
-                    if before_eq.ends_with(' ') || after_eq.starts_with(' ') {
-                        issues.push((line_num, "💡".to_string(), format!("Key '{}' has spaces around '=' (styling)", key)));
-                    }
-                }
-            }
-        } else {
-            // Line doesn't contain '=' - might be an issue
-            if !trimmed.starts_with('#') && !trimmed.is_empty() {
-                issues.push((line_num, "⚠️".to_string(), format!("Line doesn't look like a key=value pair: {}", trimmed)));
-            }
-        }
-    }
-
-    // Summary
-    println!("📊 Summary:");
-    println!("   Total lines: {}", lines.len());
-    println!("   Environment variables: {}", key_count);
-    println!("   VOE configured: {}", if has_ve_vault { "✅ Yes" } else { "❌ No" });
-    println!();
-
-    if issues.is_empty() {
-        println!("✅ No issues found! Your .env file looks good.");
-    } else {
-        println!("⚠️  Found {} issue(s):", issues.len());
-        println!();
-        
-        // Group by severity
-        let mut errors: Vec<&(usize, String, String)> = Vec::new();
-        let mut warnings: Vec<&(usize, String, String)> = Vec::new();
-        let mut tips: Vec<&(usize, String, String)> = Vec::new();
-        
-        for issue in &issues {
-            match issue.1.as_str() {
-                "❌" => errors.push(issue),
-                "⚠️" => warnings.push(issue),
-                "💡" => tips.push(issue),
-                _ => {}
-            }
-        }
-
-        if !errors.is_empty() {
-            println!("Errors (should fix):");
-            for (line, icon, msg) in &errors {
-                println!("   Line {:3} {} {}", line, icon, msg);
-            }
-            println!();
-        }
-
-        if !warnings.is_empty() {
-            println!("Warnings (consider fixing):");
-            for (line, icon, msg) in &warnings {
-                println!("   Line {:3} {} {}", line, icon, msg);
-            }
-            println!();
-        }
-
-        if !tips.is_empty() {
-            println!("Tips (optional improvements):");
-            for (line, icon, msg) in &tips {
-                println!("   Line {:3} {} {}", line, icon, msg);
-            }
-            println!();
-        }
-
-        let error_count = errors.len();
-        if error_count > 0 {
-            println!("❌ Validation failed with {} error(s)", error_count);
-            std::process::exit(1);
-        } else {
-            println!("⚠️  Validation passed with warnings");
-        }
-    }
-
-    Ok(())
-}
-
-async fn cmd_share(folder_path: String, recipient_email: String, permission: String) -> Result<(), Box<dyn std::error::Error>> {
-    // Note: Sharing from CLI requires public key encryption which is not yet implemented.
-    // For now, use the web interface to share folders.
-    // 
-    // The sharing flow requires:
-    // 1. Fetch recipient's public key from server
-    // 2. Encrypt the vault password with recipient's public key
-    // 3. Send the encrypted password to create the share
-    //
-    // This maintains end-to-end encryption since the server never sees the plaintext password.
-    
-    println!("⚠️  CLI sharing is not yet supported with the new E2E encryption.");
-    println!("   Please use the web interface at {} to share folders.", get_base_url());
-    println!();
-    println!("   Alternatively, you can manually share the vault password securely");
-    println!("   and have the recipient use 've pull -p {} -P <password>'", folder_path);
-    
-    Ok(())
-}
-
-async fn cmd_shares(incoming: bool, outgoing: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = get_base_url();
-
-    // If neither flag is set, show both
-    let show_incoming = incoming || (!incoming && !outgoing);
-    let show_outgoing = outgoing || (!incoming && !outgoing);
-
-    if show_incoming {
-        println!("📥 Incoming Shares (shared with you):");
-        let response: SharesResponse = make_authenticated_request(
-            reqwest::Method::GET,
-            &format!("{}/api/shares/incoming", base_url),
-            None::<&()>,
-        )
-        .await?;
-
-        if let Some(error) = response.error {
-            println!("   Error: {}", error);
-        } else if let Some(shares) = response.shares {
-            if shares.is_empty() {
-                println!("   No incoming shares");
-            } else {
-                for share in shares {
-                    let permission_icon = if share.permission == "readwrite" { "✏️" } else { "👁️" };
-                    println!("   {} 📁 {} (from {})", permission_icon, share.folder_path, share.shared_by.as_ref().map(|u| &u.email).unwrap_or(&"unknown".to_string()));
-                }
-            }
-        }
-        println!();
-    }
-
-    if show_outgoing {
-        println!("📤 Outgoing Shares (shared by you):");
-        let response: SharesResponse = make_authenticated_request(
-            reqwest::Method::GET,
-            &format!("{}/api/shares/outgoing", base_url),
-            None::<&()>,
-        )
-        .await?;
-
-        if let Some(error) = response.error {
-            println!("   Error: {}", error);
-        } else if let Some(shares) = response.shares {
-            if shares.is_empty() {
-                println!("   No outgoing shares");
-            } else {
-                for share in shares {
-                    let permission_icon = if share.permission == "readwrite" { "✏️" } else { "👁️" };
-                    println!("   {} 📁 {} → {} [{}]", permission_icon, share.folder_path, share.shared_with.as_ref().map(|u| &u.email).unwrap_or(&"unknown".to_string()), share.id);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn cmd_unshare(folder_path: String, recipient_email: String) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚫 Revoking share of '{}' from '{}'", folder_path, recipient_email);
-
-    // First, we need to get the list of outgoing shares to find the share ID
-    let base_url = get_base_url();
-    let response: SharesResponse = make_authenticated_request(
-        reqwest::Method::GET,
-        &format!("{}/api/shares/outgoing", base_url),
-        None::<&()>,
-    )
-    .await?;
-
-    if let Some(error) = response.error {
-        return Err(format!("Failed to get shares: {}", error).into());
-    }
-
-    let shares = response.shares.ok_or("No shares found")?;
-    
-    // Find the share that matches folder_path and recipient_email
-    let matching_share = shares.iter().find(|share| {
-        share.folder_path == folder_path && 
-        share.shared_with.as_ref().map(|u| u.email == recipient_email).unwrap_or(false)
-    });
-
-    let share_id = matching_share.ok_or("Share not found. Use 've shares --outgoing' to see your shares.")?.id.clone();
-
-    // Delete the share
-    let delete_response: ShareResponse = make_authenticated_request(
-        reqwest::Method::DELETE,
-        &format!("{}/api/shares/{}", base_url, share_id),
-        None::<&()>,
-    )
-    .await?;
-
-    if let Some(error) = delete_response.error {
-        return Err(format!("Unshare failed: {}", error).into());
-    }
-
-    if delete_response.success {
-        println!("✅ {}", delete_response.message.unwrap_or_else(|| "Share revoked successfully".to_string()));
-    }
-
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    match &cli.command {
-        Commands::Update => cmd_update().await,
-        Commands::Auth => cmd_auth().await,
-        Commands::Test => cmd_test().await,
-        Commands::Init {
-            path,
-            password,
-            git,
-        } => cmd_init(path.clone(), password.clone(), git.clone()),
-        Commands::Push { force } => cmd_push(*force).await,
-        Commands::Pull {
-            force,
-            path,
-            password,
-        } => cmd_pull(*force, path.clone(), password.clone()).await,
-        Commands::ChangePassword { password } => cmd_change_password(password.clone()).await,
-        Commands::Whoami => cmd_whoami().await,
-        Commands::List => cmd_list().await,
-        Commands::Diff => cmd_diff().await,
-        Commands::Search { pattern } => cmd_search(pattern.clone()).await,
-        Commands::Validate => cmd_validate(),
-        Commands::Share { folder_path, recipient_email, permission } => {
-            cmd_share(folder_path.clone(), recipient_email.clone(), permission.clone()).await
-        }
-        Commands::Shares { incoming, outgoing } => cmd_shares(*incoming, *outgoing).await,
-        Commands::Unshare { folder_path, recipient_email } => {
-            cmd_unshare(folder_path.clone(), recipient_email.clone()).await
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const LEGACY_CIPHERTEXT: &str =
-        "AAECAwQFBgcICQoLSkEj8pBQ+U8UTnp9i1JY8Da0DYax5gxQr+1X95nyxvFkTZcssOTm+A==";
-    const LEGACY_PASSWORD: &str = "compatibility password";
-    const LEGACY_PLAINTEXT: &str = "legacy vault secret 🔐";
-
-    #[test]
-    fn decrypts_existing_webcrypto_vault_values() {
-        assert_eq!(
-            decrypt_value(LEGACY_CIPHERTEXT, LEGACY_PASSWORD).unwrap(),
-            LEGACY_PLAINTEXT
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_vault_values() {
-        assert!(decrypt_value(LEGACY_CIPHERTEXT, "wrong password").is_err());
-        assert!(decrypt_value("AAECAwQ=", LEGACY_PASSWORD).is_err());
-        let mut ciphertext = general_purpose::STANDARD.decode(LEGACY_CIPHERTEXT).unwrap();
-        ciphertext[12] ^= 1;
-        assert!(decrypt_value(
-            &general_purpose::STANDARD.encode(ciphertext),
-            LEGACY_PASSWORD
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn encrypts_vault_values_with_unique_nonces() {
-        let first = encrypt_value(LEGACY_PLAINTEXT, LEGACY_PASSWORD).unwrap();
-        let second = encrypt_value(LEGACY_PLAINTEXT, LEGACY_PASSWORD).unwrap();
-        assert_ne!(first, second);
-        assert_eq!(
-            decrypt_value(&first, LEGACY_PASSWORD).unwrap(),
-            LEGACY_PLAINTEXT
-        );
-        assert_eq!(
-            decrypt_value(&second, LEGACY_PASSWORD).unwrap(),
-            LEGACY_PLAINTEXT
-        );
-    }
 }

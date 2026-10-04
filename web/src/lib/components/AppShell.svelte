@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import type { Snippet } from 'svelte';
+	import { lock } from '#lib/vault-client.ts';
 	import { authClient } from '#lib/auth-client.ts';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.ts';
 	import AppSidebar from '#lib/components/AppSidebar.svelte';
@@ -19,6 +20,7 @@
 	let error = $state('');
 
 	async function signOut() {
+		lock();
 		signingOut = true;
 		error = '';
 		try {

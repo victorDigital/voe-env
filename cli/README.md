@@ -1,176 +1,60 @@
 # VOE CLI
 
-A minimal command-line interface for interacting with the VOE environment vault.
+The CLI encrypts and decrypts organization secrets locally. Sign in once through your browser; there is no vault password.
 
-## Features
+## Install and connect
 
-- Device authorization flow for secure authentication
-- Token persistence (no need to login every time)
-- Protected API testing
-- Minimal dependencies for easy deployment
+Use the installer on your VOE homepage, or build with `cargo build --release` in `cli/`.
 
-## Installation
-
-### Hosted installer
-
-Open your VOE site's homepage and copy the install command for your platform. It downloads the matching binary, adds `ve` to PATH, and saves the site URL in `~/.voe/server-url`. Open a new terminal and run `ve auth` to sign in.
-
-The installer supports macOS, Linux (including WSL), and Windows on x86_64 and ARM64. Rust is only required when building the CLI from source.
-
-### Manual Installation
-
-```bash
-cd cli
-make install
-# or
-cargo build --release
-sudo cp target/release/ve /usr/local/bin/ve
-sudo chmod +x /usr/local/bin/ve
-```
-
-## Usage
-
-Once installed, you can use the `ve` command:
-
-```bash
-# Initialize VOE in the current directory
-ve init
-# or with arguments
-ve init --path org:product:dev --password mypassword
-
-# Push .env file to the vault
-ve push
-
-# Authenticate with the server
+```sh
 ve auth
-
-# Test the protected API endpoint
-ve test
+ve workspaces
+ve init --org ORGANIZATION_ID --path product:production
+ve pull
+ve push
 ```
 
-The `ve test` command will automatically authenticate if no valid token is found.
+Create the workspace and folder in the web app first. During `ve auth`, open the printed URL, unlock your vault, paste the full device fingerprint from your terminal, and select the workspaces to grant. This step binds the CLI's encryption key to your approval. A device only receives keys for the selected workspaces, and every request also checks current membership and role.
 
-## Updating
+Credentials and the device private key are stored in macOS Keychain, Windows Credential Manager, or the Linux Secret Service. Linux requires a running, unlocked Secret Service; there is no plaintext fallback. Sessions expire and revoked devices must be enrolled again. Headless CI/workload identities are not supported by this version.
 
-Run `ve update` to download the latest platform binary from your configured site and replace the current executable. Your saved site URL, login token, and environment files are preserved. `VOE_BASE_URL` can override the site used for updates.
-
-## Building
-
-### Quick Build
-
-```bash
-cd cli
-./build.sh
-# or
-make build
-```
-
-### Development Build
-
-```bash
-cd cli
-make dev
-# or
-cargo build
-```
-
-# VOE CLI
-
-VOE (Vault of Environments) CLI - Secure environment variable management with online vault storage.
-
-## Installation
-
-```bash
-cargo install --path .
-```
-
-## .env.example Synchronization
-
-The CLI automatically keeps `.env.example` files in sync with your local environment variables:
-
-- **Never creates** `.env.example` - only updates it if it already exists
-- **Keys only** - stores environment variable keys with placeholder values (`xxx`)
-- **Auto-sync** - updated whenever `.env` is modified (init, pull, change-password)
-- **Preserves structure** - maintains existing comments and formatting in `.env.example`
-
-Example `.env.example`:
-
-```bash
-# Database configuration
-DATABASE_URL=xxx
-DB_USER=xxx
-
-# API settings
-API_KEY=xxx
-DEBUG=xxx
-```
+`.voe.json` contains only the server URL, organization ID, and folder ID and can be committed. `.env` contains the application secrets you pull and should stay out of version control. Neither file stores a vault password.
 
 ## Commands
 
-- `ve init` - Initialize VOE in the current directory
-  - `--path, -p` - Vault path (e.g., org:product:dev)
-  - `--password, -P` - Vault password/lock
-  - If not provided, will prompt for input
-  - Creates/updates `.env` file with `VE_VAULT_KEYPASS=path+password`
-  - Updates `.env.example` if it exists
-  - Skips if `.env` already contains `VE_VAULT_KEYPASS`
+| Command | Behavior |
+| --- | --- |
+| `ve auth` | Browser approval and device key enrollment |
+| `ve logout` | Delete local credentials; revoke the device in web settings to block server access |
+| `ve workspaces` | List organization IDs, names, and your roles |
+| `ve init --org ID --path folder:path` | Select an existing folder; omit `--path` for the root |
+| `ve push` | Encrypt and upsert local variables, preserving other remote variables |
+| `ve push --force` | Also delete remote variables absent from this folder's local `.env` |
+| `ve pull` | Merge remote values; refuse conflicting local values |
+| `ve pull --force` | Replace `.env` with this folder's remote variables |
+| `ve diff` | Compare names and equality without printing values |
+| `ve list` | List folder paths and secret names in the configured organization |
+| `ve search PATTERN` | Search secret names in that organization |
+| `ve validate` | Check `.env` syntax and duplicate names |
+| `ve whoami` / `ve test` | Check the authenticated account |
+| `ve update` | Replace the executable with the latest release from your configured server |
 
-- `ve push` - Push .env file to the online vault
-  - `--force` - Force push - delete server variables not present locally (requires confirmation)
-  - Reads `.env` file from current directory
-  - Encrypts all environment variables using the vault password
-  - Uploads encrypted values to the server
-  - Requires authentication (auto-authenticates if needed)
+`VOE_BASE_URL` overrides the saved installer URL in `~/.voe/server-url`; the default is `https://env.voe.dk`. `push`, `pull`, `list`, `diff`, and `search` use the server saved in `.voe.json`. Use the same server when running `ve auth`. HTTPS is required except on localhost.
 
-- `ve pull` - Pull .env file from the online vault
-  - `--force` - Force replace with server version, may delete unsynced variables
-  - `-p, --path` - Vault path (e.g., org:product:dev) - initializes if .env doesn't exist
-  - `-P, --password` - Vault password/lock - initializes if .env doesn't exist
-  - If .env doesn't exist and path/password are provided, initializes the project first
-  - Merges server variables with local ones (update mode) or replaces completely (force mode)
-  - Updates `.env.example` if it exists
-  - Requires authentication (auto-authenticates if needed)
+A concurrent edit or key rotation rejects stale pushes. Pull again before retrying. Removal blocks new requests immediately; downloaded `.env` files cannot be revoked.
 
-- `ve change-password` - Change vault password (only if local and server are identical)
-  - `-P, --password` - New vault password/lock
-  - If not provided, will prompt for input
-  - Verifies local and server environments are exactly the same
-  - Re-encrypts all variables with new password and uploads to server
-  - Updates local `.env` file with new password
-  - Updates `.env.example` if it exists
+## Existing installations
 
-- `ve auth` - Authenticate with the VOE server using device authorization
+Back up your database and keep old browser keys until migration is verified. Open **Workspace settings → Migrate legacy vaults**, enter the old folder passwords once, and migrate into a personal workspace. Old recipients are never added automatically. Legacy vaults remain available as a read-only archive.
 
-- `ve test` - Test the protected API endpoint (auto-authenticates if needed)
+Upgrade the CLI, run `ve auth` and `ve init --org ...`, then `ve pull` after verifying the new workspace. Successful pulls remove `VE_VAULT_KEYPASS` from `.env`. The new CLI ignores old plaintext `~/.voe/token.json` credentials; remove that old file after successful enrollment. The old `share`, `unshare`, `shares`, and password-changing commands have been retired.
 
-## Configuration
+## Development
 
-The CLI uses the URL saved by the hosted installer. Set `VOE_BASE_URL` to override it. Without either setting, the default is `https://env.voe.dk`.
-
-```bash
-export VOE_BASE_URL=https://your-server.com
-ve auth
+```sh
+cargo test
+cargo build
+python3 tests/test_update.py target/debug/ve
 ```
 
-## CI and releases
-
-`.github/workflows/cli.yml` builds all six platform binaries on pull requests and pushes to `main`. Pushing a `cli-v*` tag also publishes the binaries and `SHA256SUMS` as a GitHub release:
-
-```bash
-git tag cli-v0.1.0
-git push origin cli-v0.1.0
-```
-
-Commit and push the CLI and workflow changes before tagging. The first release must be published before the homepage installer can download binaries. The web app redirects `/downloads/<asset>` to the latest release; set `VOE_CLI_RELEASE_URL` to a specific release's download URL to pin the version.
-
-## Token Storage
-
-Tokens are stored in `~/.voe/token.json` and are automatically:
-
-- Loaded on startup
-- Validated for expiration
-- Refreshed if invalid
-
-## Security
-
-This CLI uses Better Auth's device authorization plugin for secure, OAuth-like authentication. Tokens are stored locally but are never committed to git (see `.gitignore`).
+Shared browser/Rust encryption vectors live in `web/test/fixtures/vault-v1.json`. Those keys are public test fixtures, never production keys. Release builds use the native OS credential backend; Linux cross-builds vendor the D-Bus/OpenSSL dependencies.
