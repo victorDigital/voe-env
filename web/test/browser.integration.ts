@@ -236,6 +236,9 @@ try {
 			const [org] =
 				await sql`select organization.id from organization inner join member on member.organization_id=organization.id where member.user_id=${userId} and organization.name='Browser workspace'`;
 			await run(['init', '--org', org.id, '--path', 'production']);
+			const originalConfig = await readFile(join(directory, '.voe.json'), 'utf8');
+			await run(['init', '--org', 'browser WORKSPACE', '--path', 'production']);
+			expect(await readFile(join(directory, '.voe.json'), 'utf8')).toBe(originalConfig);
 			await writeFile(
 				join(directory, '.env'),
 				'CLI_KEY="cli-round-trip"\nVE_VAULT_KEYPASS="legacy+password"\n',

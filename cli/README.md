@@ -9,12 +9,14 @@ Use the installer on your VOE homepage, or build with `cargo build --release` in
 ```sh
 ve auth
 ve workspaces
-ve init --org ORGANIZATION_ID --path product:production
+ve init --org wemuda --path product:production
 ve pull
 ve push
 ```
 
 Create the workspace and folder in the web app first. During `ve auth`, open the printed URL, unlock your vault, paste the full device fingerprint from your terminal, and select the workspaces to grant. This step binds the CLI's encryption key to your approval. A device only receives keys for the selected workspaces, and every request also checks current membership and role.
+
+`--org` accepts a workspace name (case-insensitive) or its exact ID. Run `ve init` without `--org` to select your only workspace automatically or choose from a numbered list. Duplicate names also open the chooser; scripts must pass a unique name or exact ID. Omit `--path` to use the workspace root.
 
 Credentials and the device private key are stored in macOS Keychain, Windows Credential Manager, or the Linux Secret Service. Linux requires a running, unlocked Secret Service; there is no plaintext fallback. Sessions expire and revoked devices must be enrolled again. Headless CI/workload identities are not supported by this version.
 
@@ -27,7 +29,7 @@ Credentials and the device private key are stored in macOS Keychain, Windows Cre
 | `ve auth` | Browser approval and device key enrollment |
 | `ve logout` | Delete local credentials; revoke the device in web settings to block server access |
 | `ve workspaces` | List organization IDs, names, and your roles |
-| `ve init --org ID --path folder:path` | Select an existing folder; omit `--path` for the root |
+| `ve init [--org NAME_OR_ID] [--path folder:path]` | Choose a workspace and existing folder; defaults to the root |
 | `ve push` | Encrypt and upsert local variables, preserving other remote variables |
 | `ve push --force` | Also delete remote variables absent from this folder's local `.env` |
 | `ve pull` | Merge remote values; refuse conflicting local values |

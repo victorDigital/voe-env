@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::Write,
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -36,8 +36,8 @@ enum Commands {
     Workspaces,
     #[command(about = "Select an organization and existing folder for this project")]
     Init {
-        #[arg(long)]
-        org: String,
+        #[arg(long, help = "Workspace name or ID; omit to choose a workspace")]
+        org: Option<String>,
         #[arg(short, long, default_value = "")]
         path: String,
     },
@@ -70,6 +70,12 @@ struct Project {
     server: String,
     organization_id: String,
     folder_id: String,
+}
+#[derive(Deserialize)]
+struct Workspace {
+    id: String,
+    name: String,
+    role: String,
 }
 #[derive(Serialize, Deserialize)]
 struct Credentials {
@@ -160,7 +166,7 @@ fn validate_server(value: &str) -> Result<String> {
 fn project() -> Result<Project> {
     let mut p: Project = serde_json::from_str(
         &fs::read_to_string(".voe.json")
-            .map_err(|_| "Run ve init --org <organization-id> --path <folder:path> first")?,
+            .map_err(|_| "Run ve init first to select a workspace for this project")?,
     )?;
     p.server = validate_server(&p.server)?;
     Ok(p)
@@ -427,12 +433,76 @@ fn write_env(values: &BTreeMap<String, String>) -> Result<()> {
     file.persist(".env")?;
     Ok(())
 }
-async fn init(org: String, folder_path: String) -> Result<()> {
+fn workspace_choices<'a>(
+    workspaces: &'a [Workspace],
+    selector: Option<&str>,
+) -> Result<Vec<&'a Workspace>> {
+    if workspaces.is_empty() {
+        return Err("No workspaces found. Create or join a workspace in the web app first.".into());
+    }
+    let mut choices: Vec<_> = if let Some(selector) = selector {
+        let selector = selector.trim();
+        if let Some(workspace) = workspaces.iter().find(|workspace| workspace.id == selector) {
+            return Ok(vec![workspace]);
+        }
+        let matches: Vec<_> = workspaces
+            .iter()
+            .filter(|workspace| workspace.name.to_lowercase() == selector.to_lowercase())
+            .collect();
+        if matches.is_empty() {
+            return Err(format!(
+                "Workspace {selector:?} not found. Run ve workspaces to see your available workspaces."
+            )
+            .into());
+        }
+        matches
+    } else {
+        workspaces.iter().collect()
+    };
+    choices.sort_by_key(|workspace| (workspace.name.to_lowercase(), &workspace.id));
+    Ok(choices)
+}
+fn choose_workspace<'a>(choices: &[&'a Workspace]) -> Result<&'a Workspace> {
+    if let [workspace] = choices {
+        return Ok(workspace);
+    }
+    if !io::stdin().is_terminal() {
+        return Err("Multiple workspaces match. Pass --org with a unique workspace name or ID, or run ve init in a terminal to choose.".into());
+    }
+    println!("Choose a workspace:");
+    for (index, workspace) in choices.iter().enumerate() {
+        println!(
+            "  {}. {} ({}) [{}]",
+            index + 1,
+            workspace.name,
+            workspace.role,
+            workspace.id
+        );
+    }
+    print!("Workspace number: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let selected = input
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .and_then(|number| number.checked_sub(1))
+        .and_then(|index| choices.get(index));
+    selected.copied().ok_or_else(|| {
+        "Invalid workspace selection. Run ve init again and choose a listed number.".into()
+    })
+}
+async fn init(org: Option<String>, folder_path: String) -> Result<()> {
     let server = validate_server(&get_base_url())?;
     let credentials = credentials(&server)?;
+    let workspaces: Vec<Workspace> =
+        serde_json::from_value(request(&server, &credentials, "/api/workspaces", None).await?)?;
+    let choices = workspace_choices(&workspaces, org.as_deref())?;
+    let workspace = choose_workspace(&choices)?;
     let mut project = Project {
         server,
-        organization_id: org,
+        organization_id: workspace.id.clone(),
         folder_id: String::new(),
     };
     let snapshot = snapshot(&project, &credentials).await?;
@@ -446,7 +516,12 @@ async fn init(org: String, folder_path: String) -> Result<()> {
     let mut file = tempfile::NamedTempFile::new_in(".")?;
     file.write_all(serde_json::to_string_pretty(&project)?.as_bytes())?;
     file.persist(".voe.json")?;
-    println!("Project configured. .voe.json contains only server, organization, and folder IDs.");
+    let selected_path = if folder_path.is_empty() {
+        "/"
+    } else {
+        &folder_path
+    };
+    println!("Project configured: {} ({selected_path})", workspace.name);
     Ok(())
 }
 async fn push(force: bool) -> Result<()> {
@@ -634,6 +709,42 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn workspace(id: &str, name: &str) -> Workspace {
+        Workspace {
+            id: id.into(),
+            name: name.into(),
+            role: "owner".into(),
+        }
+    }
+    #[test]
+    fn init_accepts_names_and_an_omitted_workspace() {
+        let cli = Cli::try_parse_from(["ve", "init"]).unwrap();
+        assert!(matches!(cli.command, Commands::Init { org: None, .. }));
+        let cli = Cli::try_parse_from(["ve", "init", "--org", "wemuda"]).unwrap();
+        assert!(matches!(cli.command, Commands::Init { org: Some(name), .. } if name == "wemuda"));
+        let workspaces = [workspace("opaque-id", "Wemuda")];
+        for selector in [None, Some("wemuda"), Some(" WEMUDA "), Some("opaque-id")] {
+            let choices = workspace_choices(&workspaces, selector).unwrap();
+            assert_eq!(choose_workspace(&choices).unwrap().id, "opaque-id");
+        }
+    }
+    #[test]
+    fn workspace_matching_never_guesses_an_ambiguous_or_missing_name() {
+        let workspaces = [workspace("b", "Wemuda"), workspace("a", "wemuda")];
+        let choices = workspace_choices(&workspaces, Some("wemuda")).unwrap();
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].id, "a");
+        assert_eq!(workspace_choices(&workspaces, None).unwrap().len(), 2);
+        assert!(workspace_choices(&workspaces, Some("wem")).is_err());
+        assert!(workspace_choices(&workspaces, Some("")).is_err());
+        assert!(workspace_choices(&[], None).is_err());
+    }
+    #[test]
+    fn exact_workspace_ids_take_priority_over_names() {
+        let workspaces = [workspace("a", "Other"), workspace("b", "a")];
+        let choices = workspace_choices(&workspaces, Some("a")).unwrap();
+        assert_eq!(choose_workspace(&choices).unwrap().id, "a");
+    }
     #[test]
     fn rejects_insecure_servers() {
         assert!(validate_server("http://example.com").is_err());

@@ -18,7 +18,7 @@
 	);
 	const commands = [
 		{ command: 've auth', description: 'Sign in' },
-		{ command: 've init --org ID --path dev', description: 'Select a workspace folder' },
+		{ command: 've init --path dev', description: 'Choose a workspace folder' },
 		{ command: 've push', description: 'Upload .env' },
 		{ command: 've pull', description: 'Download .env' },
 		{ command: 've update', description: 'Update CLI' }
