@@ -298,7 +298,7 @@
 					>{/if}
 			</div>
 			<aside
-				class="min-w-0 md:col-start-1 md:row-span-2 md:row-start-1 md:block md:border-r md:pr-4"
+				class="min-w-0 md:col-start-1 md:row-span-2 md:row-start-1 md:block md:border-r"
 				class:hidden={!treeOpen}
 			>
 				<div
