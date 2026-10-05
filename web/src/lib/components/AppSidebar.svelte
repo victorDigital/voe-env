@@ -78,7 +78,7 @@
 <Sidebar.Root collapsible="icon" aria-label="Application sidebar">
 	<Sidebar.Header class="gap-3 px-3 pt-0 pb-3 group-data-[collapsible=icon]:px-2">
 		<div
-			class="flex h-14 shrink-0 items-center justify-between group-data-[collapsible=icon]:justify-center"
+			class="flex h-12 shrink-0 items-center justify-between group-data-[collapsible=icon]:justify-center"
 		>
 			<a
 				href="/dashboard/env"
