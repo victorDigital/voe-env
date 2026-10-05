@@ -1,6 +1,10 @@
+mod credential_store;
 mod crypto;
+mod local_auth;
 use clap::{Parser, Subcommand};
+use credential_store::CredentialStore;
 use crypto::{context, seal, unseal};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use rand::RngCore;
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
@@ -176,13 +180,8 @@ fn project() -> Result<Project> {
     p.server = validate_server(&p.server)?;
     Ok(p)
 }
-fn credential_entry(server: &str) -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new("voe-cli", server)?)
-}
 fn credentials(server: &str) -> Result<Credentials> {
-    let stored = Zeroizing::new(credential_entry(server)?.get_password().map_err(|_| {
-        "No credential-store entry. Run ve auth for this server. No plaintext fallback is used."
-    })?);
+    let stored = CredentialStore::new(server)?.load()?;
     let credentials: Credentials = serde_json::from_str(&stored)?;
     if credentials.expires_at <= now() {
         return Err("CLI session expired. Run ve auth again".into());
@@ -241,7 +240,7 @@ async fn request(
 }
 async fn authenticate() -> Result<()> {
     let server = validate_server(&get_base_url())?;
-    let entry = credential_entry(&server)?;
+    let store = CredentialStore::new(&server)?;
     let (public, private) = crypto::generate_identity()?;
     let code: DeviceCode = client()?
         .post(format!("{server}/api/auth/device/code"))
@@ -285,9 +284,7 @@ async fn authenticate() -> Result<()> {
                         .ok_or("Missing session expiry")?,
             };
             let serialized = Zeroizing::new(serde_json::to_string(&credentials)?);
-            entry.set_password(&serialized).map_err(|e| {
-                format!("Could not store credentials in the OS credential store: {e}")
-            })?;
+            store.save(&serialized)?;
             println!("Device enrolled. Credentials are stored in your OS credential store.");
             return Ok(());
         }
@@ -881,7 +878,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Auth => authenticate().await,
         Commands::Logout => {
-            credential_entry(&validate_server(&get_base_url())?)?.delete_credential()?;
+            CredentialStore::new(&validate_server(&get_base_url())?)?.delete()?;
             println!("Local credentials removed. Revoke the device in workspace settings to remove server access.");
             Ok(())
         }
@@ -1173,25 +1170,89 @@ async fn cmd_update() -> Result<()> {
         _ => return Err("Updates are not supported on this platform".into()),
     };
 
-    println!("Downloading the latest ve...");
-    let binary = Client::builder()
+    println!("Checking for updates...");
+    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
+    let mut latest_version = None;
+    let client = Client::builder()
         .timeout(Duration::from_secs(120))
-        .build()?
-        .get(format!("{}/downloads/{}", get_base_url(), asset))
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let mut url = reqwest::Url::parse(&format!("{}/downloads/{}", get_base_url(), asset))?;
+    let mut redirects = 0;
+    let mut response = loop {
+        if let Some(version) = release_version(&url) {
+            match version.cmp_precedence(&current_version) {
+                std::cmp::Ordering::Equal => {
+                    println!("ve {current_version} is already up to date.");
+                    return Ok(());
+                }
+                std::cmp::Ordering::Less => {
+                    println!("ve {current_version} is newer than the latest release ({version}). Keeping the installed version.");
+                    return Ok(());
+                }
+                std::cmp::Ordering::Greater => latest_version = Some(version),
+            }
+        }
+        let response = client.get(url.clone()).send().await?.error_for_status()?;
+        if !response.status().is_redirection() {
+            break response;
+        }
+        if redirects >= 10 {
+            return Err("Too many redirects while checking for updates".into());
+        }
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .ok_or("Update redirect is missing its location")?
+            .to_str()?;
+        url = url.join(location)?;
+        redirects += 1;
+    };
+    let length = response.content_length();
+    let draw_target = if io::stdout().is_terminal() {
+        ProgressDrawTarget::stderr_with_hz(10)
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+    let template = if length.is_some() {
+        "Downloading [{bar:24}] {percent:>3}% {bytes}/{total_bytes}"
+    } else {
+        "Downloading {bytes}"
+    };
+    let progress = ProgressBar::with_draw_target(length, draw_target)
+        .with_style(ProgressStyle::with_template(template)?.progress_chars("=>-"))
+        .with_finish(ProgressFinish::AndClear);
+    let mut binary = Vec::with_capacity(usize::try_from(length.unwrap_or(0))?);
+    while let Some(chunk) = response.chunk().await? {
+        binary.extend_from_slice(&chunk);
+        progress.inc(chunk.len() as u64);
+    }
+    progress.finish_and_clear();
 
     if !binary.starts_with(header) {
         return Err("The download is not a valid executable for this platform".into());
+    }
+    if latest_version.is_none() && binary == fs::read(env::current_exe()?)? {
+        println!("ve {current_version} is already up to date.");
+        return Ok(());
     }
 
     let mut download = tempfile::NamedTempFile::new()?;
     download.write_all(&binary)?;
     download.flush()?;
     self_replace::self_replace(download.path())?;
-    println!("Updated ve.");
+    if let Some(version) = latest_version {
+        println!("Updated ve from {current_version} to {version}.");
+    } else {
+        println!("Updated ve.");
+    }
     Ok(())
+}
+
+fn release_version(url: &reqwest::Url) -> Option<semver::Version> {
+    let segments: Vec<_> = url.path_segments()?.collect();
+    let release = segments
+        .windows(3)
+        .find(|parts| parts[0] == "releases" && parts[1] == "download")?;
+    semver::Version::parse(release[2].strip_prefix("cli-v")?).ok()
 }
