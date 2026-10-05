@@ -9,6 +9,7 @@
 	import { authClient } from '#lib/auth-client.ts';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.ts';
 	import AppSidebar from '#lib/components/AppSidebar.svelte';
+	import { useDashboard } from '#lib/dashboard.svelte.ts';
 
 	let {
 		children,
@@ -20,6 +21,7 @@
 		sidebarOpen?: boolean;
 	} = $props();
 
+	const dashboard = useDashboard();
 	let signingOut = $state(false);
 	let error = $state('');
 
@@ -48,18 +50,29 @@
 	<Sidebar.Inset id="main-content" class="min-w-0">
 		<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-2.5">
 			<Sidebar.Trigger aria-label="Toggle navigation" class="size-9 shrink-0" />
-			<span class="text-xs text-muted-foreground"
-				>{page.url.pathname === '/dashboard/account'
-					? 'Account settings'
-					: page.url.pathname === '/dashboard/workspace'
-						? 'Workspace settings'
-						: 'Vault'}</span
-			>
+			{#if dashboard.header && $isUnlocked}
+				{@render dashboard.header()}
+			{:else}
+				<span class="text-xs text-muted-foreground"
+					>{page.url.pathname === '/dashboard/account'
+						? 'Account settings'
+						: page.url.pathname === '/dashboard/workspace'
+							? 'Workspace settings'
+							: 'Vault'}</span
+				>
+			{/if}
 			{#if $isUnlocked}<Button
-					class="ml-auto text-muted-foreground"
+					class={dashboard.header
+						? 'ml-auto size-8 px-0 text-muted-foreground sm:h-7 sm:w-auto sm:px-2.5'
+						: 'ml-auto text-muted-foreground'}
 					variant="ghost"
 					size="sm"
-					onclick={lock}><RiLockLine class="size-3.5" />Lock vault</Button
+					aria-label="Lock vault"
+					title="Lock vault"
+					onclick={lock}
+					><RiLockLine class="size-3.5" /><span class={dashboard.header ? 'hidden sm:inline' : ''}
+						>Lock vault</span
+					></Button
 				>{/if}
 		</header>
 		{#if error}

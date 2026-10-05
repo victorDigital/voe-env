@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { getContext, setContext, type Snippet } from 'svelte';
 import { api } from './vault-client';
 export type Workspace = { id: string; name: string; role: string };
 const key = Symbol('dashboard');
@@ -8,6 +8,7 @@ export class Dashboard {
 	working = $state(false);
 	revision = $state(0);
 	createOpen = $state(false);
+	header = $state<Snippet | null>(null);
 	get workspace() {
 		return this.workspaces.find((w) => w.id === this.selected);
 	}

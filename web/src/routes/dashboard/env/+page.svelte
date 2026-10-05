@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ActionError from '#lib/components/ActionError.svelte';
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
 	import { Textarea } from '#lib/components/ui/textarea/index.ts';
@@ -47,6 +47,8 @@
 	let secretValue = $state('');
 	let folderOpen = $state(false);
 	let treeOpen = $state(false);
+	let folderPath = $state<HTMLElement | null>(null);
+	let folderPathWidth = $state(0);
 	let secretOpen = $state(false);
 	let editing = $state(false);
 	let deleting = $state<{ id: string; name: string; folder: boolean } | null>(null);
@@ -86,6 +88,17 @@
 			folderOpen = false;
 			revealed = false;
 		}
+	});
+	onMount(() => {
+		dashboard.header = folderHeader;
+		return () => {
+			dashboard.header = null;
+		};
+	});
+	$effect(() => {
+		folderId;
+		folderPathWidth;
+		folderPath?.scrollTo({ left: folderPath.scrollWidth });
 	});
 	onDestroy(() => {
 		requestId++;
@@ -232,6 +245,58 @@
 	}
 </script>
 
+{#snippet folderHeader()}
+	{#if currentFolder && snapshot?.envelopes.length}
+		<div class="flex min-w-0 flex-1 items-center gap-2">
+			<Button
+				variant="ghost"
+				size="icon"
+				class="shrink-0 md:hidden"
+				aria-label="Folders"
+				title="Folders"
+				aria-expanded={treeOpen}
+				aria-controls="folder-navigation"
+				onclick={() => (treeOpen = !treeOpen)}
+			>
+				<RiFolderLine />
+			</Button>
+			<nav
+				aria-label="Folder path"
+				bind:this={folderPath}
+				bind:clientWidth={folderPathWidth}
+				class="flex min-w-0 flex-1 [scrollbar-width:none] items-center gap-1 overflow-x-auto text-xs [&::-webkit-scrollbar]:hidden"
+			>
+				{#each crumbs as crumb, index}
+					{#if index}<RiArrowRightSLine class="size-4 shrink-0 text-muted-foreground" />{/if}
+					<button
+						class="max-w-32 shrink-0 truncate px-1 py-1 font-medium hover:text-foreground disabled:text-foreground sm:max-w-64"
+						class:text-muted-foreground={index < crumbs.length - 1}
+						onclick={() => navigate(crumb.id)}
+						disabled={index === crumbs.length - 1}>{crumb.name}</button
+					>
+				{/each}
+			</nav>
+			{#if currentFolder?.parentId && canWrite}<DropdownMenu.Root
+					><DropdownMenu.Trigger
+						class="inline-flex size-8 items-center justify-center hover:bg-muted"
+						aria-label="Folder actions"><RiMoreLine class="size-4" /></DropdownMenu.Trigger
+					><DropdownMenu.Content align="end"
+						><DropdownMenu.Item
+							variant="destructive"
+							disabled={busy ||
+								!!snapshot?.secrets.some((s) => s.folderId === folderId) ||
+								!!snapshot?.folders.some((f) => f.parentId === folderId)}
+							onSelect={() => {
+								deleting = { id: folderId, name: currentFolder!.name, folder: true };
+								confirmOpen = true;
+							}}>Delete empty folder</DropdownMenu.Item
+						></DropdownMenu.Content
+					></DropdownMenu.Root
+				>{/if}
+		</div>
+	{:else}<span class="text-xs text-muted-foreground">Vault</span>{/if}
+{/snippet}
+
 <svelte:head><title>Vault · VOE</title></svelte:head>
 <div class="flex w-full flex-1 flex-col px-4 pt-4 pb-7 sm:px-8 md:py-0 md:pl-0 lg:pr-10">
 	{#if error && !secretOpen && !folderOpen}<p role="alert" class="mb-5 text-xs text-destructive">
@@ -239,55 +304,10 @@
 		</p>{/if}
 	<WorkspaceAccess userId={data.user.id} {snapshot} refresh={loadWorkspace}>
 		<div
-			class="grid min-w-0 gap-x-5 gap-y-3 md:flex-1 md:grid-cols-[12rem_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-7 lg:grid-cols-[14rem_minmax(0,1fr)]"
+			class="grid min-w-0 gap-x-5 gap-y-3 md:flex-1 md:grid-cols-[12rem_minmax(0,1fr)] md:grid-rows-[1fr] md:gap-x-7 lg:grid-cols-[14rem_minmax(0,1fr)]"
 		>
-			<div class="flex min-h-9 min-w-0 items-center gap-2 md:col-start-2 md:min-h-13 md:pt-4">
-				<Button
-					variant="ghost"
-					size="icon"
-					class="shrink-0 md:hidden"
-					aria-label="Folders"
-					title="Folders"
-					aria-expanded={treeOpen}
-					aria-controls="folder-navigation"
-					onclick={() => (treeOpen = !treeOpen)}
-				>
-					<RiFolderLine />
-				</Button>
-				<nav
-					aria-label="Folder path"
-					class="flex min-w-0 flex-1 flex-wrap items-center gap-1 text-sm"
-				>
-					{#each crumbs as crumb, index}
-						{#if index}<RiArrowRightSLine class="size-4 shrink-0 text-muted-foreground" />{/if}
-						<button
-							class="max-w-32 truncate px-1 py-1 font-medium hover:text-foreground disabled:text-foreground sm:max-w-64"
-							class:text-muted-foreground={index < crumbs.length - 1}
-							onclick={() => navigate(crumb.id)}
-							disabled={index === crumbs.length - 1}>{crumb.name}</button
-						>
-					{/each}
-				</nav>
-				{#if currentFolder?.parentId && canWrite}<DropdownMenu.Root
-						><DropdownMenu.Trigger
-							class="inline-flex size-8 items-center justify-center hover:bg-muted"
-							aria-label="Folder actions"><RiMoreLine class="size-4" /></DropdownMenu.Trigger
-						><DropdownMenu.Content align="end"
-							><DropdownMenu.Item
-								variant="destructive"
-								disabled={busy ||
-									!!snapshot?.secrets.some((s) => s.folderId === folderId) ||
-									!!snapshot?.folders.some((f) => f.parentId === folderId)}
-								onSelect={() => {
-									deleting = { id: folderId, name: currentFolder!.name, folder: true };
-									confirmOpen = true;
-								}}>Delete empty folder</DropdownMenu.Item
-							></DropdownMenu.Content
-						></DropdownMenu.Root
-					>{/if}
-			</div>
 			<aside
-				class="min-w-0 md:col-start-1 md:row-span-2 md:row-start-1 md:block md:border-r"
+				class="min-w-0 md:col-start-1 md:row-start-1 md:block md:border-r"
 				class:hidden={!treeOpen}
 			>
 				<div
@@ -306,7 +326,7 @@
 					{/key}
 				</div>
 			</aside>
-			<div class="min-w-0 md:col-start-2 md:pb-7">
+			<div class="min-w-0 md:col-start-2 md:pt-4 md:pb-7">
 				<div class="mb-3 flex min-h-9 items-center gap-2">
 					{#if hasSecrets}
 						<div class="relative min-w-0 flex-1 sm:max-w-xs">

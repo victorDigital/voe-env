@@ -153,6 +153,8 @@ try {
 	await page.getByRole('button', { name: 'Create folder', exact: true }).click();
 	const folderTree = page.getByRole('navigation', { name: 'Folders', exact: true });
 	const folderPath = page.getByRole('navigation', { name: 'Folder path', exact: true });
+	await expect(folderPath).toBeVisible();
+	expect(await folderPath.evaluate((path) => !!path.closest('main > header'))).toBe(true);
 	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await expect(folderTree.getByRole('button', { name: 'production', exact: true })).toHaveAttribute(
 		'aria-current',
@@ -203,6 +205,15 @@ try {
 		await expect(folderPath).not.toContainText('production');
 		await page.getByRole('button', { name: 'Folders', exact: true }).click();
 		await folderTree.getByRole('button', { name: 'production', exact: true }).click();
+		await expect
+			.poll(() =>
+				folderPath.evaluate((path) => {
+					const current = path.querySelector('button[disabled]')!.getBoundingClientRect();
+					const bounds = path.getBoundingClientRect();
+					return current.left >= bounds.left - 1 && current.right <= bounds.right + 1;
+				})
+			)
+			.toBe(true);
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
 			true
 		);
@@ -301,6 +312,7 @@ try {
 	await page.keyboard.press('Escape');
 	await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Browser workspace' })).toBeVisible();
+	await expect(folderPath).toHaveCount(0);
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	const settingsVerificationCount = requests.length;
 	await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
