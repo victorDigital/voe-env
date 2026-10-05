@@ -310,6 +310,24 @@
 								disabled={busy}
 								onclick={() =>
 									run(async () => {
+										const result = await authClient.organization.inviteMember({
+											organizationId: selected,
+											email: invitation.email,
+											role:
+												(invitation.role as 'owner' | 'admin' | 'member' | 'viewer') || 'member',
+											resend: true
+										});
+										if (result.error) throw new Error(result.error.message);
+										await load();
+										notice = 'Invitation resent.';
+									})}>Resend</Button
+							>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy}
+								onclick={() =>
+									run(async () => {
 										const result = await authClient.organization.cancelInvitation({
 											invitationId: invitation.id
 										});

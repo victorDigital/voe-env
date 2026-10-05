@@ -69,6 +69,59 @@ const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
 	}
 });
 try {
+	const inviteEmail = `${randomUUID()}@example.test`;
+	const orgResponse = await context.request.post(
+		'http://localhost:5174/api/auth/organization/create',
+		{
+			headers: { origin: 'http://localhost:5174' },
+			data: { name: 'Invited workspace', slug: randomUUID() }
+		}
+	);
+	expect(orgResponse.status()).toBe(200);
+	const invitedOrg = await orgResponse.json();
+	const inviteResponse = await context.request.post(
+		'http://localhost:5174/api/auth/organization/invite-member',
+		{
+			headers: { origin: 'http://localhost:5174' },
+			data: { organizationId: invitedOrg.id, email: inviteEmail, role: 'viewer' }
+		}
+	);
+	expect(inviteResponse.status()).toBe(200);
+	const inviteMessages = (await readFile('/tmp/voe-test-mailbox.jsonl', 'utf8'))
+		.trim()
+		.split('\n')
+		.map((s) => JSON.parse(s))
+		.filter((m) => m.to.includes(inviteEmail));
+	expect(inviteMessages).toHaveLength(1);
+	const inviteURL = inviteMessages[0].text.match(/http:\/\/localhost:5174\/invite\/\S+/)[0];
+	await page.goto(inviteURL);
+	await expect(page.getByRole('button', { name: 'Sign out to continue' })).toBeVisible();
+	const invitedContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+	try {
+		const invitedPage = await invitedContext.newPage();
+		const extraEmails: string[] = [];
+		invitedPage.on('request', (request) => {
+			if (request.url().includes('/sign-in/magic-link')) extraEmails.push(request.url());
+		});
+		await invitedPage.goto(inviteURL);
+		await expect(
+			invitedPage.getByRole('heading', { name: 'Join Invited workspace' })
+		).toBeVisible();
+		await invitedPage.reload();
+		await invitedPage.getByLabel('Your name', { exact: true }).fill('Invited teammate');
+		await invitedPage.getByRole('button', { name: 'Join workspace' }).click();
+		await expect(
+			invitedPage.getByRole('button', { name: 'Create passkey', exact: true })
+		).toBeVisible({ timeout: 15000 });
+		expect(new URL(invitedPage.url()).searchParams.get('workspace')).toBe(invitedOrg.id);
+		const [joined] = await sql`select name,email_verified from "user" where email=${inviteEmail}`;
+		expect(joined).toMatchObject({ name: 'Invited teammate', email_verified: true });
+		expect(extraEmails).toHaveLength(0);
+	} finally {
+		await invitedContext.close();
+		await sql`delete from organization where id=${invitedOrg.id}`;
+		await sql`delete from "user" where email=${inviteEmail}`;
+	}
 	await page.goto('http://localhost:5174/dashboard/env');
 	await expect(page.getByRole('dialog')).toBeVisible();
 	await expect(page.getByRole('dialog')).toHaveCSS('position', 'fixed');

@@ -18,7 +18,7 @@
 		"db:studio": "drizzle-kit studio",
 		"test": "bun test test/auth-pages.test.ts test/vault-crypto.test.ts",
 		"dev:test": "bun test/dev-server.ts",
-		"test:integration": "bun test/workspaces.integration.ts",
+		"test:integration": "bun test/workspaces.integration.ts && bun test/invitations.integration.ts",
 		"test:browser": "bun test/browser.integration.ts"
 	},
 	"devDependencies": {

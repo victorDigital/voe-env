@@ -22,6 +22,8 @@ import {
 import { ac, roles } from '../permissions';
 import { sendEmail } from './email';
 import { recentlyVerified } from './recent-verification';
+import { issueInvitationProof } from './invitation-proof';
+import { invitationAuth } from './invitation-auth';
 const baseURL = BETTER_AUTH_URL || 'http://localhost:5173';
 const guardedPaths = new Set([
 	'/organization/remove-member',
@@ -197,10 +199,11 @@ export const auth = betterAuth({
 			roles,
 			requireEmailVerificationOnInvitation: true,
 			sendInvitationEmail: async (data) => {
+				const token = await issueInvitationProof(data.id);
 				await sendEmail(
 					data.email,
 					`Join ${data.organization.name} on VOE`,
-					`You have been invited to ${data.organization.name}. Sign in with this email and accept at ${baseURL}/invite/${data.id}`
+					`Join ${data.organization.name}: ${baseURL}/invite/${data.id}?token=${token}\nThis link verifies your email and can be used once. It expires in 48 hours.`
 				);
 			}
 		}),
@@ -238,6 +241,7 @@ export const auth = betterAuth({
 			validateClient: (clientId) => clientId === 'voe-cli'
 		}),
 		bearer(),
+		invitationAuth(),
 		securityPlugin(),
 		sveltekitCookies(getRequestEvent)
 	]
