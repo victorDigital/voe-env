@@ -312,7 +312,7 @@
 			>
 				<div
 					id="folder-navigation"
-					class="max-h-72 overflow-auto md:sticky md:top-6 md:max-h-[calc(100dvh-7rem)] md:pt-4"
+					class="max-h-72 overflow-auto p-4 md:sticky md:top-6 md:max-h-[calc(100dvh-7rem)]"
 				>
 					{#key snapshot?.organizationId}
 						<FolderTree

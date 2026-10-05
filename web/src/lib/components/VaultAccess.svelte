@@ -3,6 +3,7 @@
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
 	import * as Dialog from '#lib/components/ui/dialog/index.ts';
+	import RiKey2Line from 'remixicon-svelte/icons/key-2-line';
 	import {
 		api,
 		beginSetup,
@@ -14,8 +15,9 @@
 	let {
 		userId,
 		onready = () => {},
-		autoOpen = true
-	}: { userId: string; onready?: () => void; autoOpen?: boolean } = $props();
+		autoOpen = true,
+		screen = false
+	}: { userId: string; onready?: () => void; autoOpen?: boolean; screen?: boolean } = $props();
 	let exists = $state<boolean | null>(null);
 	let open = $state(false);
 	$effect(() => {
@@ -57,6 +59,26 @@
 	}
 </script>
 
+{#snippet unlockButton()}
+	<Dialog.Trigger
+		onclick={() => {
+			if (exists) run(signInAndUnlock);
+		}}
+	>
+		{#snippet child({ props })}<Button
+				{...props}
+				variant={screen ? 'default' : 'outline'}
+				class={screen ? 'mt-6 h-9 gap-2 px-4' : 'mb-6'}
+				disabled={busy || exists === null}
+				>{#if screen}<RiKey2Line />{/if}{busy
+					? 'Unlocking…'
+					: exists === false
+						? 'Set up vault'
+						: 'Unlock vault'}</Button
+			>{/snippet}
+	</Dialog.Trigger>
+{/snippet}
+
 <Dialog.Root
 	bind:open
 	onOpenChange={(value) => {
@@ -69,19 +91,47 @@
 	}}
 >
 	{#if !$isUnlocked}
-		<Dialog.Trigger
-			onclick={() => {
-				if (exists) run(signInAndUnlock);
-			}}
-		>
-			{#snippet child({ props })}<Button
-					{...props}
-					variant="outline"
-					class="mb-6"
-					disabled={busy || exists === null}
-					>{exists === false ? 'Set up vault' : 'Unlock vault'}</Button
-				>{/snippet}
-		</Dialog.Trigger>
+		{#if screen}
+			<section
+				aria-labelledby="vault-locked-title"
+				class="vault-locked relative flex min-h-96 flex-1 flex-col items-center justify-center overflow-hidden px-6 py-16 text-center"
+			>
+				<div aria-hidden="true" class="vault-grid pointer-events-none absolute inset-0"></div>
+				<div class="relative flex flex-col items-center">
+					<svg
+						aria-hidden="true"
+						focusable="false"
+						class="vault-circuit mb-6 size-40"
+						viewBox="0 0 160 160"
+						fill="none"
+					>
+						<g stroke="currentColor" stroke-width="1">
+							<path opacity="0.25" d="M52 14H108L146 52V108L108 146H52L14 108V52Z" />
+							<path opacity="0.5" d="M57 27H103L133 57V103L103 133H57L27 103V57Z" />
+							<path
+								d="M0 80H27M133 80H160M80 0V27M80 133V160M14 48V14H48M112 14H146V48M146 112V146H112M48 146H14V112"
+							/>
+							<path stroke-width="2" d="M65 72V59A15 15 0 0 1 95 59V72M58 72H102V106H58Z" />
+							<path stroke-width="2" d="M80 88V96" />
+						</g>
+						<circle cx="80" cy="85" r="3" fill="currentColor" />
+						<path
+							d="M78 12H82V16H78ZM144 78H148V82H144ZM78 144H82V148H78ZM12 78H16V82H12Z"
+							fill="currentColor"
+						/>
+					</svg>
+					<p class="mb-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+						Encrypted vault
+					</p>
+					<h1 id="vault-locked-title" class="text-xl font-medium tracking-tight">
+						{exists === false ? 'Set up your vault' : 'Vault locked'}
+					</h1>
+					{@render unlockButton()}
+				</div>
+			</section>
+		{:else}
+			{@render unlockButton()}
+		{/if}
 	{/if}
 	<Dialog.Content
 		class="max-h-[calc(100dvh-2rem)] overflow-y-auto p-6 sm:max-w-md"
@@ -199,3 +249,34 @@
 		</section>
 	</Dialog.Content>
 </Dialog.Root>
+
+<style>
+	.vault-locked {
+		--vault-signal: oklch(0.48 0.09 195);
+		background: radial-gradient(
+			ellipse 280px 220px at center,
+			color-mix(in oklch, var(--vault-signal) 7%, transparent),
+			transparent
+		);
+	}
+	:global(.dark) .vault-locked {
+		--vault-signal: oklch(0.8 0.12 195);
+	}
+	.vault-circuit {
+		color: var(--vault-signal);
+	}
+	.vault-grid {
+		background-image:
+			linear-gradient(
+				color-mix(in oklch, var(--vault-signal) 8%, transparent) 1px,
+				transparent 1px
+			),
+			linear-gradient(
+				90deg,
+				color-mix(in oklch, var(--vault-signal) 8%, transparent) 1px,
+				transparent 1px
+			);
+		background-size: 32px 32px;
+		mask-image: radial-gradient(ellipse 260px 240px at center, black, transparent);
+	}
+</style>

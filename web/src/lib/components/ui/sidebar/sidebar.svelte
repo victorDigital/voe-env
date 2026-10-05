@@ -41,7 +41,7 @@
 			data-slot="sidebar"
 			data-mobile="true"
 			class={cn(
-				'w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden',
+				'w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground ease-out-cubic [animation-timing-function:var(--ease-out-cubic)] [&>button]:hidden',
 				className
 			)}
 			style="--sidebar-width: {SIDEBAR_WIDTH_MOBILE};"
@@ -69,7 +69,7 @@
 		<div
 			data-slot="sidebar-gap"
 			class={cn(
-				'relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear',
+				'relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-out-cubic',
 				'group-data-[collapsible=offcanvas]:w-0',
 				'group-data-[side=right]:rotate-180',
 				variant === 'floating' || variant === 'inset'
@@ -81,7 +81,7 @@
 			data-slot="sidebar-container"
 			data-side={side}
 			class={cn(
-				'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:start-0 data-[side=left]:group-data-[collapsible=offcanvas]:start-[calc(var(--sidebar-width)_*_-1)] data-[side=right]:end-0 data-[side=right]:group-data-[collapsible=offcanvas]:end-[calc(var(--sidebar-width)_*_-1)] md:flex',
+				'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-out-cubic data-[side=left]:start-0 data-[side=left]:group-data-[collapsible=offcanvas]:start-[calc(var(--sidebar-width)_*_-1)] data-[side=right]:end-0 data-[side=right]:group-data-[collapsible=offcanvas]:end-[calc(var(--sidebar-width)_*_-1)] md:flex',
 				variant === 'floating' || variant === 'inset'
 					? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_(--spacing(4))_+_2px)]'
 					: 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-e group-data-[side=right]:border-s',
