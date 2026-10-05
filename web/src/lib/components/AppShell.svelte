@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { isUnlocked } from '#lib/vault-client.ts';
+	import { Button } from '#lib/components/ui/button/index.ts';
+	import RiLockLine from 'remixicon-svelte/icons/lock-line';
 	import { goto } from '$app/navigation';
 	import type { Snippet } from 'svelte';
 	import { lock } from '#lib/vault-client.ts';
@@ -37,14 +41,30 @@
 
 <Sidebar.Provider
 	open={sidebarOpen}
-	style="--sidebar-width: 15rem; --sidebar-width-icon: 3rem;"
+	style="--sidebar-width: 14rem; --sidebar-width-icon: 3rem;"
 	class="min-w-0"
 >
 	<AppSidebar {user} {signingOut} onSignOut={signOut} />
 	<Sidebar.Inset id="main-content" class="min-w-0">
 		<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-6">
 			<Sidebar.Trigger aria-label="Toggle navigation" class="size-9 shrink-0" />
-			<h1 class="text-sm font-medium">Vault</h1>
+			<span class="text-xs text-muted-foreground"
+				>{page.url.pathname === '/dashboard/account'
+					? 'Account settings'
+					: page.url.pathname === '/dashboard/workspace'
+						? 'Workspace settings'
+						: page.url.pathname.includes('migrate')
+							? 'Migration'
+							: page.url.pathname.includes('legacy')
+								? 'Archive'
+								: 'Vault'}</span
+			>
+			{#if $isUnlocked}<Button
+					class="ml-auto text-muted-foreground"
+					variant="ghost"
+					size="sm"
+					onclick={lock}><RiLockLine class="size-3.5" />Lock vault</Button
+				>{/if}
 		</header>
 		{#if error}
 			<p

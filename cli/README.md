@@ -47,7 +47,7 @@ A concurrent edit or key rotation rejects stale pushes. Pull again before retryi
 
 ## Existing installations
 
-Back up your database and keep old browser keys until migration is verified. Open **Workspace settings → Migrate legacy vaults**, enter the old folder passwords once, and migrate into a personal workspace. Old recipients are never added automatically. Legacy vaults remain available as a read-only archive.
+Back up your database and keep old browser keys until migration is verified. Open **Account settings → Migrate vaults**, enter the old folder passwords once, and migrate into a personal workspace. Old recipients are never added automatically. Legacy vaults remain available as a read-only archive.
 
 Upgrade the CLI, run `ve auth` and `ve init --org ...`, then `ve pull` after verifying the new workspace. Successful pulls remove `VE_VAULT_KEYPASS` from `.env`. The new CLI ignores old plaintext `~/.voe/token.json` credentials; remove that old file after successful enrollment. The old `share`, `unshare`, `shares`, and password-changing commands have been retired.
 

@@ -26,12 +26,12 @@
 	--secondary-foreground: oklch(0.21 0.006 285.885);
 	--muted: oklch(0.97 0 0);
 	--muted-foreground: oklch(0.556 0 0);
-	--accent: oklch(0.496 0.265 301.924);
-	--accent-foreground: oklch(0.977 0.014 308.299);
+	--accent: oklch(0.95 0 0);
+	--accent-foreground: var(--foreground);
 	--destructive: oklch(0.577 0.245 27.325);
 	--destructive-foreground: #ffffff;
 	--border: oklch(0.922 0 0);
-	--input: oklch(0.62 0 0);
+	--input: var(--border);
 	--ring: var(--primary);
 
 	--radius: 0rem;
@@ -63,12 +63,12 @@
 	--secondary-foreground: oklch(0.985 0 0);
 	--muted: oklch(0.269 0 0);
 	--muted-foreground: oklch(0.708 0 0);
-	--accent: oklch(0.438 0.218 303.724);
-	--accent-foreground: oklch(0.977 0.014 308.299);
+	--accent: oklch(0.25 0 0);
+	--accent-foreground: var(--foreground);
 	--destructive: oklch(0.704 0.191 22.216);
 	--destructive-foreground: #131612;
 	--border: oklch(1 0 0 / 10%);
-	--input: oklch(0.62 0 0);
+	--input: var(--border);
 	--ring: oklch(0.708 0 0);
 
 	--chart-1: oklch(0.827 0.119 306.383);
@@ -76,7 +76,7 @@
 	--chart-3: oklch(0.558 0.288 302.321);
 	--chart-4: oklch(0.496 0.265 301.924);
 	--chart-5: oklch(0.438 0.218 303.724);
-	--sidebar: oklch(0.205 0 0);
+	--sidebar: oklch(0.17 0 0);
 	--sidebar-foreground: oklch(0.985 0 0);
 	--sidebar-primary: oklch(0.627 0.265 303.9);
 	--sidebar-primary-foreground: oklch(0.977 0.014 308.299);
@@ -107,7 +107,8 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--font-sans: 'Geist Variable', sans-serif;
-	--font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+	--font-mono:
+		ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 	--radius-xs: 0;
 	--radius-sm: 0;
 	--radius-md: 0;

@@ -48,10 +48,10 @@
 
 {#if !$isUnlocked}
 	<section
-		class="mx-auto my-10 w-full max-w-lg rounded-xl border bg-card p-6 sm:p-8"
+		class="mx-auto my-10 w-full max-w-md border bg-card p-6 sm:p-8"
 		aria-label="Unlock vault"
 	>
-		<h2 class="text-2xl font-semibold tracking-tight">
+		<h2 class="text-xl font-semibold tracking-tight">
 			{pending
 				? 'Save your recovery key'
 				: exists
@@ -59,13 +59,14 @@
 					: 'Set up your encrypted vault'}
 		</h2>
 		{#if pending}
-			<p class="mt-3 text-sm text-muted-foreground">
+			<p class="mt-3 text-xs leading-5 text-muted-foreground">
 				Save this key somewhere safe, outside VOE. You will need it if you lose your passkeys. We
 				cannot recover it for you.
 			</p>
-			<code class="my-5 block rounded bg-muted p-4 break-all select-all">{pending.recoveryKey}</code
+			<code class="my-5 block border bg-muted/20 p-4 text-xs leading-6 break-all select-all"
+				>{pending.recoveryKey}</code
 			>
-			<label class="block text-sm" for="confirm-recovery"
+			<label class="block text-xs" for="confirm-recovery"
 				>Paste your saved key to verify your backup</label
 			>
 			<Input
@@ -79,13 +80,13 @@
 				>Finish setup</Button
 			>
 		{:else if exists}
-			<p class="mt-3 text-sm text-muted-foreground">
+			<p class="mt-3 text-xs leading-5 text-muted-foreground">
 				Use your passkey to decrypt secrets on this device.
 			</p>
 			<Button class="mt-6 w-full" disabled={busy} onclick={() => run(signInAndUnlock)}
 				>{busy ? 'Unlocking…' : 'Unlock with passkey'}</Button
 			>
-			<details class="mt-5 text-sm">
+			<details class="mt-5 text-xs">
 				<summary class="cursor-pointer text-muted-foreground">Recover with an offline key</summary>
 				<label class="mt-4 block" for="recovery-key">Recovery key</label><Input
 					id="recovery-key"
@@ -108,7 +109,7 @@
 					Recovery signs out your other sessions. Add a replacement passkey after unlocking.
 				</p>
 			</details>
-			<details class="mt-4 text-sm">
+			<details class="mt-4 text-xs">
 				<summary class="cursor-pointer text-muted-foreground"
 					>Lost every passkey and recovery key?</summary
 				>
@@ -132,7 +133,7 @@
 				>
 			</details>
 		{:else if exists === false}
-			<p class="mt-3 text-sm text-muted-foreground">
+			<p class="mt-3 text-xs leading-5 text-muted-foreground">
 				Create a passkey, then save an offline recovery key. Your passkey must support encryption
 				unlock (WebAuthn PRF).
 			</p>

@@ -23,7 +23,8 @@ export const GET: RequestHandler = async (event) => {
 				.select({
 					id: encryptionDevice.id,
 					publicKey: encryptionDevice.publicKey,
-					revoked: encryptionDevice.revoked
+					revoked: encryptionDevice.revoked,
+					createdAt: encryptionDevice.createdAt
 				})
 				.from(encryptionDevice)
 				.where(eq(encryptionDevice.userId, user.id))

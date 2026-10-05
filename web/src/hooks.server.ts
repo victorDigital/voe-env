@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { auth } from '#lib/server/auth.ts';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 import { building } from '$app/env';
+import { BETTER_AUTH_URL } from '$app/env/private';
 import type { Handle, ServerInit } from '@sveltejs/kit/hooks';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { db } from '#lib/server/db/index.ts';
@@ -15,7 +16,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		!['GET', 'HEAD'].includes(event.request.method)
 	) {
 		const origin = event.request.headers.get('origin');
-		if (origin && origin !== event.url.origin)
+		const expectedOrigin = BETTER_AUTH_URL ? new URL(BETTER_AUTH_URL).origin : event.url.origin;
+		if (origin && origin !== expectedOrigin)
 			return json({ message: 'Invalid origin' }, { status: 403 });
 		if (!event.request.headers.get('content-type')?.startsWith('application/json'))
 			return json({ message: 'JSON required' }, { status: 415 });

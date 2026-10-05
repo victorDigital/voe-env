@@ -15,6 +15,7 @@ await sql`insert into session (id,user_id,token,expires_at,updated_at) values ($
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
+page.setDefaultTimeout(15000);
 await page.addInitScript(() => {
 	const get = navigator.credentials.get.bind(navigator.credentials);
 	navigator.credentials.get = async (options) => {
@@ -78,28 +79,117 @@ try {
 	await expect(page.getByRole('button', { name: 'Lock vault', exact: true })).toBeVisible({
 		timeout: 15000
 	});
-	await page.getByLabel('New workspace name').fill('Browser workspace');
 	await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
-	await expect(page.getByRole('heading', { name: 'Add or update a secret' })).toBeVisible({
+	await page.getByLabel('New workspace name').fill('Browser workspace');
+	await page
+		.getByRole('dialog')
+		.getByRole('button', { name: 'Create workspace', exact: true })
+		.click();
+	await expect(page.getByRole('button', { name: 'Add secret', exact: true })).toBeVisible({
 		timeout: 15000
 	});
+	await page.getByRole('button', { name: 'New folder', exact: true }).click();
 	await page.getByLabel('Folder name', { exact: true }).fill('production');
 	await page.getByRole('button', { name: 'Create folder', exact: true }).click();
-	await page.getByRole('button', { name: '▸ production Folder' }).click();
-	await page.getByLabel('Secret name', { exact: true }).fill('API_KEY');
-	await page.getByLabel('Secret value', { exact: true }).fill('browser-test-only');
+	await page.getByRole('button', { name: 'production', exact: true }).click();
+	await page.getByRole('button', { name: 'Add secret', exact: true }).click();
+	await page.getByLabel('Name', { exact: true }).fill('API_KEY');
+	await page.getByLabel('Value', { exact: true }).fill('browser-test-only');
 	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.getByText('API_KEY', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Show values' }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
+	const longName = 'DOCUMENT_INTELLIGENCE_ENDPOINT_WITH_A_VERY_LONG_ENVIRONMENT_VARIABLE_NAME';
+	await page.getByRole('button', { name: 'Add secret', exact: true }).click();
+	await page.getByLabel('Name', { exact: true }).fill(longName);
+	await page
+		.getByLabel('Value', { exact: true })
+		.fill('a-long-value-that-must-stay-inside-its-own-column');
+	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	const longRow = page.getByRole('row').filter({ hasText: longName });
+	await expect(longRow).toBeVisible();
+	for (const width of [1440, 390]) {
+		await page.setViewportSize({ width, height: 900 });
+		expect(
+			await longRow.evaluate((row) => {
+				const cells = row.querySelectorAll('td');
+				const name = cells[0].firstElementChild!.getBoundingClientRect();
+				const value = cells[1].firstElementChild!.getBoundingClientRect();
+				return name.right <= value.left && document.documentElement.scrollWidth <= innerWidth;
+			})
+		).toBe(true);
+	}
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.screenshot({ path: '/tmp/voe-workspace-desktop.png', fullPage: true });
+	await page.getByLabel('Search this folder').fill('DOCUMENT_INTELLIGENCE');
+	await expect(page.getByText('API_KEY', { exact: true })).toHaveCount(0);
+	await page.getByRole('button', { name: `Actions for ${longName}` }).click();
+	await page.getByRole('menuitem', { name: 'Edit secret' }).click();
+	await expect(page.getByLabel('Name', { exact: true })).toHaveAttribute('readonly');
+	await page.getByLabel('Value', { exact: true }).fill('updated-value');
+	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(longRow).toContainText('updated-value');
+	await page.getByRole('button', { name: `Actions for ${longName}` }).click();
+	await page.getByRole('menuitem', { name: 'Delete secret' }).click();
+	await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
+	await expect(longRow).toHaveCount(0);
+	await page.getByLabel('Search this folder').fill('');
+	const vaultURL = page.url();
+	await page.getByRole('button', { name: 'Install CLI', exact: true }).click();
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(page.getByLabel('Installation command')).toContainText('/install.sh');
+	await page.getByRole('tab', { name: 'Windows' }).click();
+	await expect(page.getByLabel('Installation command')).toContainText('/install.ps1');
+	expect(page.url()).toBe(vaultURL);
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Switch workspace' }).click();
+	await expect(page.getByRole('menuitem', { name: 'Browser workspace' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+	await expect(page.getByRole('heading', { name: 'Browser workspace' })).toBeVisible();
+	await page.getByRole('button', { name: 'Invite member', exact: true }).click();
+	await page.getByLabel('Role', { exact: true }).click();
+	await page.getByRole('option', { name: 'Viewer', exact: true }).click();
+	await expect(page.getByText('Can read secrets.', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.getByRole('button', { name: 'Toggle navigation' }).click();
+	await expect(page.getByRole('button', { name: 'Close navigation' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Documentation', exact: true })).toBeVisible();
+	await page.screenshot({ path: '/tmp/voe-sidebar-mobile.png', fullPage: true });
+	await page.getByRole('link', { name: 'Vault', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Close navigation' })).toHaveCount(0);
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await page.getByRole('button', { name: 'production', exact: true }).click();
+	await page.getByRole('button', { name: 'Show values' }).click();
+
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
-	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible({
-		timeout: 15000
-	});
-	await page.getByRole('button', { name: 'Settings', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
+	await page.getByRole('button', { name: 'Show values' }).click();
+	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Account menu' }).click();
+	await page.getByRole('menuitem', { name: 'Account settings' }).click();
+	const deviceId = randomUUID();
+	const [identity] = await sql`select public_key from encryption_identity where user_id=${userId}`;
+	await sql`insert into encryption_device (id,user_id,public_key,device_code_id) values (${deviceId},${userId},${identity.public_key},${randomUUID()})`;
+	await page.getByRole('link', { name: 'Vault', exact: true }).click();
+	await page.getByRole('button', { name: 'Account menu' }).click();
+	await page.getByRole('menuitem', { name: 'Account settings' }).click();
+	await expect(page.getByText(deviceId.slice(0, 8), { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
+	await page
+		.getByRole('alertdialog')
+		.getByRole('button', { name: 'Revoke access', exact: true })
+		.click();
+	await expect(page.getByText('No approved devices.', { exact: true })).toBeVisible();
+	const [revoked] = await sql`select revoked from encryption_device where id=${deviceId}`;
+	expect(revoked.revoked).toBe(true);
 	await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false });
 	const backup = await cdp.send('WebAuthn.addVirtualAuthenticator', {
 		options: {
@@ -113,22 +203,24 @@ try {
 			hasPrf: true
 		}
 	});
-	await page.getByRole('button', { name: 'Add backup passkey' }).click();
-	await expect(page.getByText('Backup passkey enrolled for vault unlock.')).toBeVisible({
+	await page.getByRole('button', { name: 'Add passkey' }).click();
+	await expect(page.getByText('Passkey added.')).toBeVisible({
 		timeout: 15000
 	});
+	await page.getByRole('link', { name: 'Vault', exact: true }).click();
+	await page.getByRole('button', { name: 'production', exact: true }).click();
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
-	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible({
-		timeout: 15000
-	});
+	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
+	await page.getByRole('button', { name: 'Show values' }).click();
+	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await page.getByText('Recover with an offline key', { exact: true }).click();
 	await page.getByLabel('Recovery key', { exact: true }).fill(recovery);
 	await page.getByRole('button', { name: 'Recover vault', exact: true }).click();
-	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible({
-		timeout: 15000
-	});
+	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
+	await page.getByRole('button', { name: 'Show values' }).click();
+	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.screenshot({ path: '/tmp/voe-workspace-mobile.png', fullPage: true });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -268,7 +360,7 @@ try {
 		expect(request).not.toContain('prf');
 	}
 	console.log(
-		'PASS: Chromium PRF authenticator onboarding, verified recovery backup, workspace/folder/secret creation, lock/unlock, backup passkey, recovery, responsive layout, and no PRF network serialization'
+		'PASS: Chromium PRF onboarding, recovery, secret CRUD, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
 	);
 } catch (e) {
 	await page.screenshot({ path: '/tmp/voe-browser-failure.png', fullPage: true });

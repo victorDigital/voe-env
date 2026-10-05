@@ -32,9 +32,13 @@ Workspace reads/writes currently use bounded whole-workspace snapshots: at most 
 
 Names, memberships, roles, and audit metadata remain visible to the server. E2EE cannot revoke downloaded plaintext or protect against malicious client code delivered by a compromised web origin. Rotate the actual downstream credentials after a suspected compromise.
 
+## Dashboard
+
+Switch workspaces from the sidebar. Workspace settings manage invitations, member roles, encryption access, and workspace devices. The account menu opens passkey and CLI device settings. Install CLI opens an inline dialog; documentation lives in the sidebar footer.
+
 ## Migration
 
-Use the migration screen to copy legacy ciphertext into an owner-only personal workspace. The client unlocks each old password domain, re-encrypts every value, downloads it again, and compares every plaintext before completing the migration. A server checkpoint records the destination and source digest before upload. Interrupted uploads can be retried; if the upload committed, use **Verify completed migration**. Source data is frozen, and destination revisions guard verification.
+Open **Account settings → Migrate vaults** to copy legacy ciphertext into an owner-only personal workspace. The client unlocks each old password domain, re-encrypts every value, downloads it again, and compares every plaintext before completing the migration. A server checkpoint records the destination and source digest before upload. Interrupted uploads can be retried; if the upload committed, use **Verify completed migration**. Source data is frozen, and destination revisions guard verification.
 
 Old share recipients keep only their previous archive access. Invite them explicitly to a workspace once its complete audience has been reviewed. Retain the database backup and old browser keys; do not drop legacy tables yet. Once a migrated workspace accepts new writes, rollback needs reconciliation rather than restoring an old snapshot over it.
 
@@ -54,6 +58,8 @@ bunx playwright install chromium
 bun test/browser.integration.ts
 ```
 
-The browser test uses Chromium's virtual PRF authenticator for onboarding, recovery, a second passkey, and encrypted CRUD. This is not a compatibility certification for real iCloud, Google, Windows, or hardware passkey providers. Check supported devices and provider sync before migrating production data. Test Resend delivery against a controlled mailbox separately.
+The browser test uses Chromium's virtual PRF authenticator for onboarding, recovery, a second passkey, and encrypted CRUD. It also checks secret-column bounds, filtering, install dialogs, mobile navigation, role selection, and device revocation. This is not a compatibility certification for real iCloud, Google, Windows, or hardware passkey providers. Check supported devices and provider sync before migrating production data. Test Resend delivery against a controlled mailbox separately.
 
 Set `VOE_TEST_CLI=1` for the browser integration script to also exercise the real built `cli/target/debug/ve` binary. This creates and deletes a synthetic localhost:5174 entry in the native OS credential store and uses a temporary project directory. Build the CLI first.
+
+For populated UI previews, run `bun test/ui-fixture.ts` against the same local test setup. It creates synthetic workspaces, members, and encrypted secrets and writes its test-only session and recovery key to `/tmp/voe-ui-fixture.json` with owner-only permissions.
