@@ -1,6 +1,5 @@
 mod credential_store;
 mod crypto;
-mod local_auth;
 use clap::{Parser, Subcommand};
 use credential_store::CredentialStore;
 use crypto::{context, seal, unseal};

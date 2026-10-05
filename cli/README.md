@@ -20,7 +20,7 @@ Create the workspace in the web app first. Folders can be created during `ve ini
 
 Credentials and the device private key are stored in macOS Keychain, Windows Credential Manager, or the Linux Secret Service. Linux requires a running, unlocked Secret Service; there is no plaintext fallback. Sessions expire and revoked devices must be enrolled again. Headless CI/workload identities are not supported by this version.
 
-On macOS, commands that read, save, or remove CLI credentials first authenticate through the system Touch ID, Apple Watch, or Mac password dialog. Cancelling, failing, or timing out after two minutes stops the operation before credential access. Approval is not cached across commands. macOS may separately ask for your password to approve Keychain access initially or after an update; allow only the `ve` executable you trust. Credentials remain in the existing Keychain, and the Touch ID check is enforced by the CLI rather than by the Keychain item itself. This approach does not require an Apple Developer membership.
+macOS may ask for your password to approve Keychain access initially or after an update; allow only the `ve` executable you trust.
 
 `.voe.json` contains only the server URL, organization ID, and folder ID and can be committed. `.env` contains the application secrets you pull and should stay out of version control. Neither file stores a vault password.
 
@@ -55,13 +55,6 @@ A concurrent edit or key rotation rejects stale pushes. Pull again before retryi
 cargo test
 cargo build
 python3 tests/test_update.py target/debug/ve
-```
-
-On a Mac with an interactive login, run the native authentication checks separately. Cancel the first dialog, then approve the second with Touch ID or the system password fallback. These checks do not access saved credentials.
-
-```sh
-cargo test native_authentication_cancelled -- --ignored --nocapture
-cargo test native_authentication_succeeds -- --ignored --nocapture
 ```
 
 Shared browser/Rust encryption vectors live in `web/test/fixtures/vault-v1.json`. Those keys are public test fixtures, never production keys. Release builds use the native OS credential backend; Linux cross-builds vendor the D-Bus/OpenSSL dependencies.
