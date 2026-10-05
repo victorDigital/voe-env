@@ -1,0 +1,1 @@
+ALTER TABLE "encryption_device" ADD COLUMN "last_used_at" timestamp with time zone;

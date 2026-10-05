@@ -282,7 +282,21 @@ try {
 		device_code: device.device_code,
 		grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
 	});
+	const unusedDevices = await expectStatus(200, 'owner', '/api/devices');
+	assert.equal(unusedDevices.find((d: { id: string }) => d.id === enrolled.id).lastUsedAt, null);
+	const usedAfter = Date.now();
 	const cli = await expectStatus(200, null, route, undefined, issued.access_token);
+	const usedDevices = await expectStatus(200, 'owner', '/api/devices');
+	const lastUsed = usedDevices.find((d: { id: string }) => d.id === enrolled.id).lastUsedAt;
+	assert.ok(Date.parse(lastUsed) >= usedAfter && Date.parse(lastUsed) <= Date.now());
+	const browserSnapshot = await expectStatus(200, 'owner', route);
+	assert.equal(
+		browserSnapshot.devices.find((d: { id: string }) => d.id === enrolled.id).lastUsedAt,
+		lastUsed
+	);
+	const [afterBrowser] =
+		await sql`select last_used_at from encryption_device where id=${enrolled.id}`;
+	assert.equal(afterBrowser.last_used_at.toISOString(), lastUsed);
 	assert.equal(cli.envelopes[0].recipient, deviceRecipient);
 	const unwrapped = await unwrapFrom(
 		devicePair.privateKey,
@@ -296,6 +310,9 @@ try {
 		deviceId: enrolled.id
 	});
 	await expectStatus(403, null, route, undefined, issued.access_token);
+	const [afterDenied] =
+		await sql`select last_used_at from encryption_device where id=${enrolled.id}`;
+	assert.equal(afterDenied.last_used_at.toISOString(), lastUsed);
 
 	const invitationId = randomUUID();
 	await sql`insert into invitation (id,organization_id,email,role,status,expires_at,inviter_id) values (${invitationId},${orgId},${actors.outsider.id + '@example.test'},'viewer','pending',now()+interval '1 hour',${actors.owner.id})`;

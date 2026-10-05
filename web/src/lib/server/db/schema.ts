@@ -237,6 +237,7 @@ export const encryptionDevice = pgTable('encryption_device', {
 		.unique()
 		.references(() => session.id, { onDelete: 'set null' }),
 	revoked: boolean('revoked').default(false).notNull(),
+	lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
 	createdAt: timestamp('created_at').defaultNow().notNull()
 });
 export const organizationEnvelope = pgTable(

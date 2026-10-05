@@ -236,7 +236,7 @@ export type Directory = {
 		role: string;
 		publicKey: string | null;
 	}[];
-	devices: { id: string; userId: string | null; publicKey: string }[];
+	devices: { id: string; userId: string | null; publicKey: string; lastUsedAt: string | null }[];
 	recipients: string[];
 	bindings: { recipient: string; identityBinding: string }[];
 };

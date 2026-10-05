@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ActionError from '#lib/components/ActionError.svelte';
+	import DeviceLastUsed from '#lib/components/DeviceLastUsed.svelte';
 	import { untrack, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Button } from '#lib/components/ui/button/index.ts';
@@ -326,6 +327,7 @@
 								<p class="mt-1 truncate text-[11px] text-muted-foreground">
 									{snapshot?.members.find((m) => m.userId === device.userId)?.email}
 								</p>
+								<DeviceLastUsed value={device.lastUsedAt} />
 							</div>
 							<Button
 								variant="outline"

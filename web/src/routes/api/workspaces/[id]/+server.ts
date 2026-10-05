@@ -40,7 +40,8 @@ async function recipients(
 				.select({
 					id: encryptionDevice.id,
 					userId: encryptionDevice.userId,
-					publicKey: encryptionDevice.publicKey
+					publicKey: encryptionDevice.publicKey,
+					lastUsedAt: encryptionDevice.lastUsedAt
 				})
 				.from(encryptionDevice)
 				.where(

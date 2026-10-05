@@ -24,7 +24,8 @@ export const GET: RequestHandler = async (event) => {
 					id: encryptionDevice.id,
 					publicKey: encryptionDevice.publicKey,
 					revoked: encryptionDevice.revoked,
-					createdAt: encryptionDevice.createdAt
+					createdAt: encryptionDevice.createdAt,
+					lastUsedAt: encryptionDevice.lastUsedAt
 				})
 				.from(encryptionDevice)
 				.where(eq(encryptionDevice.userId, user.id))

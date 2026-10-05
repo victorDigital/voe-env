@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import DeviceLastUsed from '#lib/components/DeviceLastUsed.svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import * as Dialog from '#lib/components/ui/dialog/index.ts';
 	import VaultAccess from '#lib/components/VaultAccess.svelte';
@@ -14,9 +15,15 @@
 	import RiFileCopyLine from 'remixicon-svelte/icons/file-copy-line';
 	let { data } = $props();
 	const dashboard = useDashboard();
-	let devices = $state<{ id: string; revoked: boolean; createdAt: string; publicKey: string }[]>(
-		[]
-	);
+	let devices = $state<
+		{
+			id: string;
+			revoked: boolean;
+			createdAt: string;
+			lastUsedAt: string | null;
+			publicKey: string;
+		}[]
+	>([]);
 	let passkeys = $state<{ id: string; name?: string | null; createdAt?: Date | null }[]>([]);
 	let ownFingerprint = $state('');
 	let busy = $state(false);
@@ -117,7 +124,7 @@
 							></span
 						><span class="mt-1 block text-[11px] text-muted-foreground"
 							>Added {date(device.createdAt)}</span
-						></button
+						><DeviceLastUsed value={device.lastUsedAt} /></button
 					><Button
 						variant="outline"
 						size="sm"

@@ -216,11 +216,12 @@ try {
 	await page.getByRole('menuitem', { name: 'Account settings' }).click();
 	const deviceId = randomUUID();
 	const [identity] = await sql`select public_key from encryption_identity where user_id=${userId}`;
-	await sql`insert into encryption_device (id,user_id,public_key,device_code_id) values (${deviceId},${userId},${identity.public_key},${randomUUID()})`;
+	await sql`insert into encryption_device (id,user_id,public_key,device_code_id,last_used_at) values (${deviceId},${userId},${identity.public_key},${randomUUID()},'2026-10-05T10:30:00Z')`;
 	await page.getByRole('link', { name: 'Vault', exact: true }).click();
 	await page.getByRole('button', { name: 'Account menu' }).click();
 	await page.getByRole('menuitem', { name: 'Account settings' }).click();
 	await expect(page.getByText(deviceId.slice(0, 8), { exact: true })).toBeVisible();
+	await expect(page.locator('time[datetime="2026-10-05T10:30:00.000Z"]')).toBeVisible();
 	await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
 	await page
 		.getByRole('alertdialog')
