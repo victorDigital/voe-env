@@ -151,7 +151,59 @@ try {
 	await page.getByRole('button', { name: 'New folder', exact: true }).click();
 	await page.getByLabel('Folder name', { exact: true }).fill('production');
 	await page.getByRole('button', { name: 'Create folder', exact: true }).click();
-	await page.getByRole('button', { name: 'production', exact: true }).click();
+	const folderTree = page.getByRole('navigation', { name: 'Folders', exact: true });
+	const folderPath = page.getByRole('navigation', { name: 'Folder path', exact: true });
+	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'production', exact: true })).toHaveAttribute(
+		'aria-current',
+		'location'
+	);
+	await page.getByRole('button', { name: 'New folder', exact: true }).click();
+	await page.getByLabel('Folder name', { exact: true }).fill('nested');
+	await page.getByRole('button', { name: 'Create folder', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toBeVisible();
+	await folderTree.getByRole('button', { name: 'Collapse production', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toHaveCount(0);
+	await page.getByRole('table').getByRole('button', { name: 'nested', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toHaveAttribute(
+		'aria-current',
+		'location'
+	);
+	await expect(
+		folderTree.getByRole('button', { name: 'Collapse production', exact: true })
+	).toHaveAttribute('aria-expanded', 'true');
+	await expect(folderPath).toContainText('nested');
+	await page.getByRole('button', { name: 'Folder actions', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Delete empty folder', exact: true }).click();
+	await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toHaveCount(0);
+	await expect(folderTree.getByRole('button', { name: 'production', exact: true })).toHaveAttribute(
+		'aria-current',
+		'location'
+	);
+	await page.getByLabel('Search this folder').fill('no-match');
+	await folderTree.getByRole('button', { name: 'Vault', exact: true }).click();
+	await expect(page.getByLabel('Search this folder')).toHaveValue('');
+	await page.getByRole('table').getByRole('button', { name: 'production', exact: true }).click();
+	await expect(folderTree.getByRole('button', { name: 'production', exact: true })).toHaveAttribute(
+		'aria-current',
+		'location'
+	);
+	for (const width of [390, 320]) {
+		await page.setViewportSize({ width, height: 844 });
+		await expect(folderTree).toBeHidden();
+		await page.getByRole('button', { name: 'Folders', exact: true }).click();
+		await expect(folderTree).toBeVisible();
+		await folderTree.getByRole('button', { name: 'Vault', exact: true }).click();
+		await expect(folderTree).toBeHidden();
+		await expect(folderPath).not.toContainText('production');
+		await page.getByRole('button', { name: 'Folders', exact: true }).click();
+		await folderTree.getByRole('button', { name: 'production', exact: true }).click();
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+			true
+		);
+	}
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.getByRole('button', { name: 'Add secret', exact: true }).click();
 	await page.getByLabel('Name', { exact: true }).fill('API_KEY');
 	await page.getByLabel('Value', { exact: true }).fill('browser-test-only');
@@ -269,7 +321,7 @@ try {
 	await page.getByRole('link', { name: 'Vault', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Close navigation' })).toHaveCount(0);
 	await page.setViewportSize({ width: 1440, height: 1000 });
-	await page.getByRole('button', { name: 'production', exact: true }).click();
+	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await page.getByRole('button', { name: 'Show values' }).click();
 
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
@@ -328,7 +380,7 @@ try {
 		timeout: 15000
 	});
 	await page.getByRole('link', { name: 'Vault', exact: true }).click();
-	await page.getByRole('button', { name: 'production', exact: true }).click();
+	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
@@ -427,7 +479,7 @@ try {
 		expect(request).not.toContain('prf');
 	}
 	console.log(
-		'PASS: Chromium PRF onboarding, recovery, secret CRUD, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
+		'PASS: Chromium PRF onboarding, recovery, secret CRUD, folder tree navigation, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
 	);
 } catch (e) {
 	await page.screenshot({ path: '/tmp/voe-browser-failure.png', fullPage: true });

@@ -36,6 +36,8 @@ Names, memberships, roles, and audit metadata remain visible to the server. E2EE
 
 Switch workspaces from the sidebar. Workspace settings manage invitations, member roles, encryption access, and workspace devices. The account menu opens passkey and CLI device settings. Install CLI opens an inline dialog; documentation lives in the sidebar footer.
 
+The vault has a collapsible folder tree beside the contents, with connecting lines and the current folder highlighted. Selecting a folder or following a breadcrumb keeps the tree in sync. On mobile, open the Folders panel above the contents to navigate.
+
 ## Verification
 
 ```sh

@@ -10,6 +10,7 @@
 	import * as Table from '#lib/components/ui/table/index.ts';
 	import WorkspaceAccess from '#lib/components/WorkspaceAccess.svelte';
 	import ConfirmAction from '#lib/components/ConfirmAction.svelte';
+	import FolderTree from '#lib/components/FolderTree.svelte';
 	import { useDashboard } from '#lib/dashboard.svelte.ts';
 	import {
 		api,
@@ -44,6 +45,7 @@
 	let secretName = $state('');
 	let secretValue = $state('');
 	let folderOpen = $state(false);
+	let treeOpen = $state(false);
 	let secretOpen = $state(false);
 	let editing = $state(false);
 	let deleting = $state<{ id: string; name: string; folder: boolean } | null>(null);
@@ -103,6 +105,7 @@
 		if (snapshot?.organizationId !== id) {
 			snapshot = null;
 			folderId = '';
+			treeOpen = false;
 			query = '';
 			revealed = false;
 		}
@@ -239,143 +242,185 @@
 			{error}
 		</p>{/if}
 	<WorkspaceAccess userId={data.user.id} {snapshot} refresh={loadWorkspace}>
-		<div class="mb-7 flex min-w-0 flex-wrap items-center justify-between gap-4">
-			<nav aria-label="Folder path" class="flex min-w-0 flex-wrap items-center gap-1 text-sm">
-				{#each crumbs as crumb, index}{#if index}<RiArrowRightSLine
-							class="size-4 shrink-0 text-muted-foreground"
-						/>{/if}<button
-						class="max-w-64 truncate px-1 py-1 font-medium hover:text-foreground disabled:text-foreground"
-						class:text-muted-foreground={index < crumbs.length - 1}
-						onclick={() => navigate(crumb.id)}
-						disabled={index === crumbs.length - 1}>{crumb.name}</button
-					>{/each}
-			</nav>
-			{#if canWrite}<div class="flex items-center gap-2">
+		<div
+			class="grid min-w-0 gap-5 md:grid-cols-[12rem_minmax(0,1fr)] md:gap-7 lg:grid-cols-[14rem_minmax(0,1fr)]"
+		>
+			<aside class="min-w-0 border-b pb-3 md:border-r md:border-b-0 md:pr-4 md:pb-0">
+				<div class="md:sticky md:top-6">
+					<p class="mb-3 hidden px-3 text-[11px] font-medium text-muted-foreground md:block">
+						Folders
+					</p>
+					<button
+						type="button"
+						class="flex min-h-11 w-full items-center gap-2 text-left text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring md:hidden"
+						aria-expanded={treeOpen}
+						aria-controls="folder-navigation"
+						onclick={() => (treeOpen = !treeOpen)}
+					>
+						<RiFolderLine class="size-4 text-muted-foreground" />Folders
+						<RiArrowRightSLine
+							class={`ml-auto size-4 text-muted-foreground ${treeOpen ? 'rotate-90' : ''}`}
+						/>
+					</button>
+					<div
+						id="folder-navigation"
+						class="max-h-72 overflow-auto md:block md:max-h-[calc(100dvh-10rem)]"
+						class:hidden={!treeOpen}
+					>
+						{#key snapshot?.organizationId}
+							<FolderTree
+								folders={snapshot?.folders || []}
+								selected={folderId}
+								onnavigate={(id: string) => {
+									navigate(id);
+									treeOpen = false;
+								}}
+							/>
+						{/key}
+					</div>
+				</div>
+			</aside>
+			<div class="min-w-0">
+				<div class="mb-7 flex min-w-0 flex-wrap items-center justify-between gap-4">
+					<nav aria-label="Folder path" class="flex min-w-0 flex-wrap items-center gap-1 text-sm">
+						{#each crumbs as crumb, index}{#if index}<RiArrowRightSLine
+									class="size-4 shrink-0 text-muted-foreground"
+								/>{/if}<button
+								class="max-w-64 truncate px-1 py-1 font-medium hover:text-foreground disabled:text-foreground"
+								class:text-muted-foreground={index < crumbs.length - 1}
+								onclick={() => navigate(crumb.id)}
+								disabled={index === crumbs.length - 1}>{crumb.name}</button
+							>{/each}
+					</nav>
+					{#if canWrite}<div class="flex items-center gap-2">
+							<Button
+								variant="outline"
+								disabled={busy}
+								onclick={() => {
+									folderOpen = true;
+									error = '';
+								}}><RiFolderLine />New folder</Button
+							><Button disabled={busy} onclick={() => openSecret()}><RiAddLine />Add secret</Button>
+						</div>{/if}
+				</div>
+				<div class="mb-3 flex items-center gap-3">
+					<div class="relative w-full max-w-xs">
+						<RiSearchLine
+							class="pointer-events-none absolute top-2.5 left-2.5 size-3.5 text-muted-foreground"
+						/><Input
+							class="h-9 border-transparent bg-muted/30 pl-8 focus-visible:border-input"
+							aria-label="Search this folder"
+							placeholder="Filter by name…"
+							bind:value={query}
+						/>
+					</div>
+					<span role="status" class="ml-auto text-xs text-muted-foreground">{notice}</span>
 					<Button
-						variant="outline"
-						disabled={busy}
-						onclick={() => {
-							folderOpen = true;
-							error = '';
-						}}><RiFolderLine />New folder</Button
-					><Button disabled={busy} onclick={() => openSecret()}><RiAddLine />Add secret</Button>
-				</div>{/if}
-		</div>
-		<div class="mb-3 flex items-center gap-3">
-			<div class="relative w-full max-w-xs">
-				<RiSearchLine
-					class="pointer-events-none absolute top-2.5 left-2.5 size-3.5 text-muted-foreground"
-				/><Input
-					class="h-9 border-transparent bg-muted/30 pl-8 focus-visible:border-input"
-					aria-label="Search this folder"
-					placeholder="Filter by name…"
-					bind:value={query}
-				/>
-			</div>
-			<span role="status" class="ml-auto text-xs text-muted-foreground">{notice}</span>
-			<Button
-				variant="ghost"
-				size="icon"
-				aria-label={revealed ? 'Hide values' : 'Show values'}
-				onclick={() => (revealed = !revealed)}
-				>{#if revealed}<RiEyeOffLine />{:else}<RiEyeLine />{/if}</Button
-			>
-			{#if currentFolder?.parentId && canWrite}<DropdownMenu.Root
-					><DropdownMenu.Trigger
-						class="inline-flex size-8 items-center justify-center hover:bg-muted"
-						aria-label="Folder actions"><RiMoreLine class="size-4" /></DropdownMenu.Trigger
-					><DropdownMenu.Content align="end"
-						><DropdownMenu.Item
-							variant="destructive"
-							disabled={busy ||
-								!!snapshot?.secrets.some((s) => s.folderId === folderId) ||
-								!!snapshot?.folders.some((f) => f.parentId === folderId)}
-							onSelect={() => {
-								deleting = { id: folderId, name: currentFolder!.name, folder: true };
-								confirmOpen = true;
-							}}>Delete empty folder</DropdownMenu.Item
-						></DropdownMenu.Content
-					></DropdownMenu.Root
-				>{/if}
-		</div>
-		<div class="border-y">
-			<Table.Root class="w-full table-fixed text-xs">
-				<Table.Header
-					><Table.Row class="hover:bg-transparent"
-						><Table.Head class="w-[48%] pl-3 text-[11px] font-normal sm:w-[46%]">Name</Table.Head
-						><Table.Head class="text-[11px] font-normal">Value</Table.Head><Table.Head class="w-20"
-							><span class="sr-only">Actions</span></Table.Head
-						></Table.Row
-					></Table.Header
-				>
-				<Table.Body>
-					{#each folders as folder}<Table.Row class="group"
-							><Table.Cell colspan={3} class="p-0"
-								><button
-									onclick={() => navigate(folder.id)}
-									class="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 text-left"
-									><RiFolderLine class="size-4 shrink-0 text-muted-foreground" /><span
-										class="truncate">{folder.name}</span
-									><RiArrowRightSLine class="ml-auto size-4 text-muted-foreground" /></button
-								></Table.Cell
-							></Table.Row
-						>{/each}
-					{#each secrets as secret}<Table.Row class="group"
-							><Table.Cell class="max-w-0 py-3.5 pl-3"
-								><span class="block truncate font-mono text-xs" title={secret.name}
-									>{secret.name}</span
-								></Table.Cell
-							><Table.Cell class="max-w-0"
-								><code
-									class="block truncate text-xs text-muted-foreground"
-									class:tracking-widest={!revealed}
-									>{revealed ? (values[secret.id] ?? 'Locked') : '••••••••••••'}</code
-								></Table.Cell
-							><Table.Cell class="px-1"
-								><div class="flex justify-end">
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										aria-label={`Copy ${secret.name}`}
-										disabled={values[secret.id] === undefined}
-										onclick={() => copy(values[secret.id])}
-										><RiFileCopyLine class="size-3.5" /></Button
-									>{#if canWrite}<DropdownMenu.Root
-											><DropdownMenu.Trigger
-												disabled={busy}
-												class="inline-flex size-7 items-center justify-center hover:bg-muted"
-												aria-label={`Actions for ${secret.name}`}
-												><RiMoreLine class="size-4" /></DropdownMenu.Trigger
-											><DropdownMenu.Content align="end"
-												><DropdownMenu.Item
-													disabled={values[secret.id] === undefined}
-													onSelect={() => openSecret(secret.name, values[secret.id])}
-													>Edit secret</DropdownMenu.Item
-												><DropdownMenu.Separator /><DropdownMenu.Item
-													variant="destructive"
-													onSelect={() => {
-														deleting = { id: secret.id, name: secret.name, folder: false };
-														confirmOpen = true;
-													}}>Delete secret</DropdownMenu.Item
-												></DropdownMenu.Content
-											></DropdownMenu.Root
-										>{/if}
-								</div></Table.Cell
-							></Table.Row
-						>{/each}
-					{#if !folders.length && !secrets.length}<Table.Row class="hover:bg-transparent"
-							><Table.Cell colspan={3} class="h-44 text-center text-muted-foreground"
-								>{query ? 'No matches.' : 'This folder is empty.'}</Table.Cell
-							></Table.Row
+						variant="ghost"
+						size="icon"
+						aria-label={revealed ? 'Hide values' : 'Show values'}
+						onclick={() => (revealed = !revealed)}
+						>{#if revealed}<RiEyeOffLine />{:else}<RiEyeLine />{/if}</Button
+					>
+					{#if currentFolder?.parentId && canWrite}<DropdownMenu.Root
+							><DropdownMenu.Trigger
+								class="inline-flex size-8 items-center justify-center hover:bg-muted"
+								aria-label="Folder actions"><RiMoreLine class="size-4" /></DropdownMenu.Trigger
+							><DropdownMenu.Content align="end"
+								><DropdownMenu.Item
+									variant="destructive"
+									disabled={busy ||
+										!!snapshot?.secrets.some((s) => s.folderId === folderId) ||
+										!!snapshot?.folders.some((f) => f.parentId === folderId)}
+									onSelect={() => {
+										deleting = { id: folderId, name: currentFolder!.name, folder: true };
+										confirmOpen = true;
+									}}>Delete empty folder</DropdownMenu.Item
+								></DropdownMenu.Content
+							></DropdownMenu.Root
 						>{/if}
-				</Table.Body>
-			</Table.Root>
+				</div>
+				<div class="border-y">
+					<Table.Root class="w-full table-fixed text-xs">
+						<Table.Header
+							><Table.Row class="hover:bg-transparent"
+								><Table.Head class="w-[48%] pl-3 text-[11px] font-normal sm:w-[46%]"
+									>Name</Table.Head
+								><Table.Head class="text-[11px] font-normal">Value</Table.Head><Table.Head
+									class="w-20"><span class="sr-only">Actions</span></Table.Head
+								></Table.Row
+							></Table.Header
+						>
+						<Table.Body>
+							{#each folders as folder}<Table.Row class="group"
+									><Table.Cell colspan={3} class="p-0"
+										><button
+											onclick={() => navigate(folder.id)}
+											class="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 text-left"
+											><RiFolderLine class="size-4 shrink-0 text-muted-foreground" /><span
+												class="truncate">{folder.name}</span
+											><RiArrowRightSLine class="ml-auto size-4 text-muted-foreground" /></button
+										></Table.Cell
+									></Table.Row
+								>{/each}
+							{#each secrets as secret}<Table.Row class="group"
+									><Table.Cell class="max-w-0 py-3.5 pl-3"
+										><span class="block truncate font-mono text-xs" title={secret.name}
+											>{secret.name}</span
+										></Table.Cell
+									><Table.Cell class="max-w-0"
+										><code
+											class="block truncate text-xs text-muted-foreground"
+											class:tracking-widest={!revealed}
+											>{revealed ? (values[secret.id] ?? 'Locked') : '••••••••••••'}</code
+										></Table.Cell
+									><Table.Cell class="px-1"
+										><div class="flex justify-end">
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												aria-label={`Copy ${secret.name}`}
+												disabled={values[secret.id] === undefined}
+												onclick={() => copy(values[secret.id])}
+												><RiFileCopyLine class="size-3.5" /></Button
+											>{#if canWrite}<DropdownMenu.Root
+													><DropdownMenu.Trigger
+														disabled={busy}
+														class="inline-flex size-7 items-center justify-center hover:bg-muted"
+														aria-label={`Actions for ${secret.name}`}
+														><RiMoreLine class="size-4" /></DropdownMenu.Trigger
+													><DropdownMenu.Content align="end"
+														><DropdownMenu.Item
+															disabled={values[secret.id] === undefined}
+															onSelect={() => openSecret(secret.name, values[secret.id])}
+															>Edit secret</DropdownMenu.Item
+														><DropdownMenu.Separator /><DropdownMenu.Item
+															variant="destructive"
+															onSelect={() => {
+																deleting = { id: secret.id, name: secret.name, folder: false };
+																confirmOpen = true;
+															}}>Delete secret</DropdownMenu.Item
+														></DropdownMenu.Content
+													></DropdownMenu.Root
+												>{/if}
+										</div></Table.Cell
+									></Table.Row
+								>{/each}
+							{#if !folders.length && !secrets.length}<Table.Row class="hover:bg-transparent"
+									><Table.Cell colspan={3} class="h-44 text-center text-muted-foreground"
+										>{query ? 'No matches.' : 'This folder is empty.'}</Table.Cell
+									></Table.Row
+								>{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+				<p class="mt-3 text-[11px] text-muted-foreground">
+					{folders.length}
+					{folders.length === 1 ? 'folder' : 'folders'}<span class="mx-2">·</span>{secrets.length}
+					{secrets.length === 1 ? 'secret' : 'secrets'}
+				</p>
+			</div>
 		</div>
-		<p class="mt-3 text-[11px] text-muted-foreground">
-			{folders.length}
-			{folders.length === 1 ? 'folder' : 'folders'}<span class="mx-2">·</span>{secrets.length}
-			{secrets.length === 1 ? 'secret' : 'secrets'}
-		</p>
 	</WorkspaceAccess>
 </div>
 <Dialog.Root
