@@ -176,7 +176,13 @@ try {
 
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	const verificationCount = requests.length;
+	await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Lock vault', exact: true })).toBeVisible();
+	expect(requests.length).toBe(verificationCount + 1);
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
 	await page.getByRole('button', { name: 'Show values' }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();

@@ -30,6 +30,7 @@
 	});
 	onDestroy(() => pending?.discard());
 	async function run(action: () => Promise<void>) {
+		if (busy) return;
 		busy = true;
 		error = '';
 		try {
@@ -63,8 +64,16 @@
 	}}
 >
 	{#if !$isUnlocked}
-		<Dialog.Trigger>
-			{#snippet child({ props })}<Button {...props} variant="outline" class="mb-6"
+		<Dialog.Trigger
+			onclick={() => {
+				if (exists) run(signInAndUnlock);
+			}}
+		>
+			{#snippet child({ props })}<Button
+					{...props}
+					variant="outline"
+					class="mb-6"
+					disabled={busy || exists === null}
 					>{exists === false ? 'Set up vault' : 'Unlock vault'}</Button
 				>{/snippet}
 		</Dialog.Trigger>
