@@ -1,13 +1,14 @@
 mod crypto;
 use clap::{Parser, Subcommand};
 use crypto::{context, seal, unseal};
+use rand::RngCore;
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::{self, IsTerminal, Write},
+    io::{self, BufRead, IsTerminal, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -34,12 +35,16 @@ enum Commands {
     Update,
     #[command(about = "List organizations you belong to")]
     Workspaces,
-    #[command(about = "Select an organization and existing folder for this project")]
+    #[command(about = "Select an organization and choose or create a folder for this project")]
     Init {
         #[arg(long, help = "Workspace name or ID; omit to choose a workspace")]
         org: Option<String>,
-        #[arg(short, long, default_value = "")]
-        path: String,
+        #[arg(
+            short,
+            long,
+            help = "Existing folder path; use / for root; omit to choose interactively"
+        )]
+        path: Option<String>,
     },
     #[command(about = "Encrypt and push .env; --force also deletes missing remote keys")]
     Push {
@@ -331,18 +336,14 @@ fn path(folders: &[Folder], id: &str) -> Result<String> {
     parts.reverse();
     Ok(parts.join(":"))
 }
-fn folder_key(
-    snapshot: &Snapshot,
-    credentials: &Credentials,
-    id: &str,
-) -> Result<Zeroizing<Vec<u8>>> {
+fn organization_key(snapshot: &Snapshot, credentials: &Credentials) -> Result<Zeroizing<Vec<u8>>> {
     let recipient = format!("device:{}", credentials.device_id);
     let envelope = snapshot
         .envelopes
         .iter()
         .find(|e| e.recipient == recipient)
         .ok_or("No key envelope for this CLI. Run ve auth to enroll it.")?;
-    let org = crypto::unwrap(
+    crypto::unwrap(
         &credentials.private_key,
         &envelope.wrapped_key,
         &context(json!([
@@ -351,7 +352,14 @@ fn folder_key(
             recipient,
             snapshot.epoch
         ])),
-    )?;
+    )
+}
+fn folder_key(
+    snapshot: &Snapshot,
+    credentials: &Credentials,
+    id: &str,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let org = organization_key(snapshot, credentials)?;
     let folder = snapshot
         .folders
         .iter()
@@ -490,7 +498,143 @@ fn choose_workspace<'a>(choices: &[&'a Workspace]) -> Result<&'a Workspace> {
         "Invalid workspace selection. Run ve init again and choose a listed number.".into()
     })
 }
-async fn init(org: Option<String>, folder_path: String) -> Result<()> {
+enum FolderSelection {
+    Existing(String),
+    Create(String),
+}
+fn prompt(input: &mut impl BufRead, output: &mut impl Write, label: &str) -> Result<String> {
+    write!(output, "{label}")?;
+    output.flush()?;
+    let mut value = String::new();
+    if input.read_line(&mut value)? == 0 {
+        return Err("Input closed. Project configuration was not changed.".into());
+    }
+    Ok(value.trim().to_string())
+}
+fn choose_folder(
+    snapshot: &Snapshot,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<FolderSelection> {
+    let mut choices = snapshot
+        .folders
+        .iter()
+        .map(|folder| Ok((path(&snapshot.folders, &folder.id)?, &folder.id)))
+        .collect::<Result<Vec<_>>>()?;
+    choices.sort();
+    if choices.is_empty() {
+        return Err("Workspace root folder not found. Initialize it in the web app first.".into());
+    }
+    let can_create = snapshot.role != "viewer" && !snapshot.rotation_required;
+    writeln!(output, "Choose a folder:")?;
+    for (index, (folder_path, _)) in choices.iter().enumerate() {
+        let label = if folder_path.is_empty() {
+            "/ (root)"
+        } else {
+            folder_path
+        };
+        writeln!(output, "  {}. {label}", index + 1)?;
+    }
+    if can_create {
+        writeln!(output, "  n. Create a new folder")?;
+    } else if snapshot.rotation_required {
+        writeln!(
+            output,
+            "Folder creation requires key rotation in workspace settings."
+        )?;
+    }
+    loop {
+        let selected = prompt(input, output, "Folder number: ")?;
+        if can_create && selected.eq_ignore_ascii_case("n") {
+            loop {
+                let folder_path =
+                    prompt(input, output, "New folder path (e.g. product:production): ")?;
+                match validate_folder_path(&folder_path) {
+                    Ok(()) => return Ok(FolderSelection::Create(folder_path)),
+                    Err(error) => writeln!(output, "{error}")?,
+                }
+            }
+        }
+        if let Some((_, id)) = selected
+            .parse::<usize>()
+            .ok()
+            .and_then(|number| number.checked_sub(1))
+            .and_then(|index| choices.get(index))
+        {
+            return Ok(FolderSelection::Existing((*id).clone()));
+        }
+        writeln!(output, "Invalid folder selection. Choose a listed option.")?;
+    }
+}
+fn validate_folder_path(folder_path: &str) -> Result<()> {
+    let parts: Vec<_> = folder_path.split(':').collect();
+    if parts.len() > 63 {
+        return Err("Folder nesting is too deep (maximum 63 levels).".into());
+    }
+    if parts.iter().any(|name| {
+        name.trim().is_empty()
+            || *name == "/"
+            || name.encode_utf16().count() > 128
+            || name.chars().any(|ch| ch <= '\u{1f}')
+    }) {
+        return Err("Use nonempty folder names of at most 128 characters, separated by colons, without control characters.".into());
+    }
+    Ok(())
+}
+fn create_folder_path(
+    snapshot: &mut Snapshot,
+    org_key: &[u8],
+    folder_path: &str,
+) -> Result<String> {
+    if snapshot.rotation_required {
+        return Err("Workspace key rotation is required. Open workspace settings.".into());
+    }
+    if snapshot.role == "viewer" {
+        return Err("Viewers cannot create folders".into());
+    }
+    validate_folder_path(folder_path)?;
+    let mut folders = snapshot.folders.clone();
+    let mut parent = folders
+        .iter()
+        .find(|folder| folder.parent_id.is_none())
+        .ok_or("Workspace root folder not found. Initialize it in the web app first.")?
+        .id
+        .clone();
+    for name in folder_path.split(':') {
+        if let Some(folder) = folders.iter().find(|folder| {
+            folder.parent_id.as_deref() == Some(parent.as_str()) && folder.name == name
+        }) {
+            parent = folder.id.clone();
+            continue;
+        }
+        if folders.len() >= 2000 {
+            return Err("Workspace folder limit reached (2000).".into());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut key = Zeroizing::new(vec![0u8; 32]);
+        rand::rngs::OsRng.try_fill_bytes(&mut key)?;
+        let wrapped_key = seal(
+            org_key,
+            &key,
+            &context(json!([
+                "folder",
+                snapshot.organization_id,
+                id,
+                snapshot.epoch
+            ])),
+        )?;
+        folders.push(Folder {
+            id: id.clone(),
+            parent_id: Some(parent),
+            name: name.to_string(),
+            wrapped_key,
+        });
+        parent = id;
+    }
+    snapshot.folders = folders;
+    Ok(parent)
+}
+async fn init(org: Option<String>, folder_path: Option<String>) -> Result<()> {
     let server = validate_server(&get_base_url())?;
     let credentials = credentials(&server)?;
     let workspaces: Vec<Workspace> =
@@ -502,21 +646,46 @@ async fn init(org: Option<String>, folder_path: String) -> Result<()> {
         organization_id: workspace.id.clone(),
         folder_id: String::new(),
     };
-    let snapshot = snapshot(&project, &credentials).await?;
-    let folder = snapshot
-        .folders
-        .iter()
-        .find(|f| path(&snapshot.folders, &f.id).ok().as_deref() == Some(folder_path.as_str()))
-        .ok_or("Folder not found. Create it in the workspace first.")?;
-    folder_key(&snapshot, &credentials, &folder.id)?;
-    project.folder_id = folder.id.clone();
+    let mut snapshot = snapshot(&project, &credentials).await?;
+    let selection = if folder_path.is_none() && io::stdin().is_terminal() {
+        choose_folder(&snapshot, &mut io::stdin().lock(), &mut io::stdout().lock())?
+    } else {
+        let folder_path = folder_path.as_deref().unwrap_or("");
+        let folder_path = if folder_path == "/" { "" } else { folder_path };
+        let folder = snapshot
+            .folders
+            .iter()
+            .find(|folder| path(&snapshot.folders, &folder.id).ok().as_deref() == Some(folder_path))
+            .ok_or("Folder not found. Run ve init without --path in a terminal to create it.")?;
+        FolderSelection::Existing(folder.id.clone())
+    };
+    let original_folder_count = snapshot.folders.len();
+    project.folder_id = match selection {
+        FolderSelection::Existing(id) => id,
+        FolderSelection::Create(folder_path) => {
+            let org_key = organization_key(&snapshot, &credentials)?;
+            create_folder_path(&mut snapshot, &org_key, &folder_path)?
+        }
+    };
+    folder_key(&snapshot, &credentials, &project.folder_id)?;
+    if snapshot.folders.len() != original_folder_count {
+        let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
+        request(
+            &project.server,
+            &credentials,
+            &format!("/api/workspaces/{}", project.organization_id),
+            Some(body),
+        )
+        .await?;
+    }
+    let selected_path = path(&snapshot.folders, &project.folder_id)?;
     let mut file = tempfile::NamedTempFile::new_in(".")?;
     file.write_all(serde_json::to_string_pretty(&project)?.as_bytes())?;
     file.persist(".voe.json")?;
-    let selected_path = if folder_path.is_empty() {
+    let selected_path = if selected_path.is_empty() {
         "/"
     } else {
-        &folder_path
+        &selected_path
     };
     println!("Project configured: {} ({selected_path})", workspace.name);
     Ok(())
@@ -798,6 +967,145 @@ mod tests {
             workspace_tree(&[folder("root", None, "")], &[]).unwrap(),
             "📂 Workspace (0 secrets):\n\nNo folders or secrets yet.\n"
         );
+    }
+    fn folder_snapshot() -> Snapshot {
+        Snapshot {
+            organization_id: "test-org".into(),
+            epoch: 3,
+            revision: 7,
+            rotation_required: false,
+            role: "owner".into(),
+            folders: vec![Folder {
+                id: "root".into(),
+                parent_id: None,
+                name: String::new(),
+                wrapped_key: "existing-root-key".into(),
+            }],
+            secrets: vec![Secret {
+                id: "secret".into(),
+                folder_id: "root".into(),
+                name: "API_KEY".into(),
+                encrypted_value: "existing-ciphertext".into(),
+            }],
+            envelopes: vec![],
+        }
+    }
+    #[test]
+    fn folder_chooser_selects_root_and_nested_folders_and_retries_invalid_input() {
+        let mut snapshot = folder_snapshot();
+        let id = create_folder_path(&mut snapshot, &[7; 32], "app:production").unwrap();
+        snapshot.folders.reverse();
+        let mut output = Vec::new();
+        let selected =
+            choose_folder(&snapshot, &mut &b"0\n99\ninvalid\n3\n"[..], &mut output).unwrap();
+        assert!(matches!(selected, FolderSelection::Existing(selected) if selected == id));
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("1. / (root)\n  2. app\n  3. app:production"));
+        assert!(!output.contains("existing-ciphertext"));
+        let selected = choose_folder(&snapshot, &mut &b"1\n"[..], &mut Vec::new()).unwrap();
+        assert!(matches!(selected, FolderSelection::Existing(id) if id == "root"));
+        assert!(choose_folder(&snapshot, &mut &b""[..], &mut Vec::new()).is_err());
+    }
+    #[test]
+    fn folder_chooser_prompts_for_a_valid_new_path() {
+        let snapshot = folder_snapshot();
+        let selected = choose_folder(
+            &snapshot,
+            &mut &b"n\n\napp::production\napp:production\n"[..],
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(matches!(selected, FolderSelection::Create(path) if path == "app:production"));
+        assert!(choose_folder(&snapshot, &mut &b"n\n"[..], &mut Vec::new()).is_err());
+    }
+    #[test]
+    fn nested_creation_reuses_existing_folders_and_wraps_independent_keys() {
+        let mut snapshot = folder_snapshot();
+        let original = serde_json::to_value(&snapshot).unwrap();
+        let key = [7; 32];
+        let parent = create_folder_path(&mut snapshot, &key, "app").unwrap();
+        let parent_envelope = snapshot.folders[1].wrapped_key.clone();
+        let id = create_folder_path(&mut snapshot, &key, "app:production").unwrap();
+        assert_eq!(path(&snapshot.folders, &id).unwrap(), "app:production");
+        assert_eq!(
+            snapshot.folders[2].parent_id.as_deref(),
+            Some(parent.as_str())
+        );
+        let keys: Vec<_> = snapshot.folders[1..]
+            .iter()
+            .map(|folder| {
+                unseal(
+                    &key,
+                    &folder.wrapped_key,
+                    &context(json!([
+                        "folder",
+                        snapshot.organization_id,
+                        folder.id,
+                        snapshot.epoch
+                    ])),
+                )
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(keys[0].len(), 32);
+        assert_eq!(keys[1].len(), 32);
+        assert_ne!(*keys[0], *keys[1]);
+        assert_eq!(snapshot.folders[1].wrapped_key, parent_envelope);
+        assert_eq!(
+            create_folder_path(&mut snapshot, &key, "app:production").unwrap(),
+            id
+        );
+        assert_eq!(snapshot.folders.len(), 3);
+        let saved = serde_json::to_value(&snapshot).unwrap();
+        for field in ["secrets", "revision", "epoch", "envelopes"] {
+            assert_eq!(saved[field], original[field]);
+        }
+        assert_eq!(saved["folders"][0], original["folders"][0]);
+        assert!(unseal(
+            &key,
+            &snapshot.folders[2].wrapped_key,
+            &context(json!(["folder", "different-org", id, snapshot.epoch]))
+        )
+        .is_err());
+    }
+    #[test]
+    fn creation_rejects_invalid_paths_without_changing_the_snapshot() {
+        let mut snapshot = folder_snapshot();
+        let original = serde_json::to_value(&snapshot).unwrap();
+        for path in ["", ":app", "app:", "app::prod", "app: ", "app:\t", "/"] {
+            assert!(create_folder_path(&mut snapshot, &[7; 32], path).is_err());
+        }
+        assert!(validate_folder_path(&"x".repeat(129)).is_err());
+        assert!(validate_folder_path(&"😀".repeat(65)).is_err());
+        assert!(validate_folder_path(&vec!["x"; 64].join(":")).is_err());
+        assert!(validate_folder_path(&vec!["x"; 63].join(":")).is_ok());
+        assert!(create_folder_path(&mut snapshot, &[7; 31], "app").is_err());
+        assert_eq!(serde_json::to_value(&snapshot).unwrap(), original);
+    }
+    #[test]
+    fn viewers_and_pending_rotation_allow_selection_but_prevent_creation() {
+        for (role, rotation_required) in [("viewer", false), ("owner", true)] {
+            let mut snapshot = folder_snapshot();
+            snapshot.role = role.into();
+            snapshot.rotation_required = rotation_required;
+            let mut output = Vec::new();
+            let selected = choose_folder(&snapshot, &mut &b"n\n1\n"[..], &mut output).unwrap();
+            assert!(matches!(selected, FolderSelection::Existing(id) if id == "root"));
+            assert!(!String::from_utf8(output).unwrap().contains("n. Create"));
+            assert!(create_folder_path(&mut snapshot, &[7; 32], "app").is_err());
+            assert_eq!(snapshot.folders.len(), 1);
+        }
+    }
+    #[test]
+    fn init_distinguishes_omitted_and_explicit_folder_paths() {
+        let cli = Cli::try_parse_from(["ve", "init"]).unwrap();
+        assert!(matches!(cli.command, Commands::Init { path: None, .. }));
+        for expected in ["", "/", "app:production"] {
+            let cli = Cli::try_parse_from(["ve", "init", "--path", expected]).unwrap();
+            assert!(
+                matches!(cli.command, Commands::Init { path: Some(path), .. } if path == expected)
+            );
+        }
     }
     fn workspace(id: &str, name: &str) -> Workspace {
         Workspace {
