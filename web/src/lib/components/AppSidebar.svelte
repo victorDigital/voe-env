@@ -98,10 +98,11 @@
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger
 				disabled={dashboard.working}
-				class="flex h-12 w-full min-w-0 items-center gap-2.5 border border-sidebar-border bg-background/40 px-2.5 text-left outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 hover:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring"
+				class="flex h-12 w-full min-w-0 items-center gap-2.5 border border-sidebar-border bg-background/40 px-2.5 text-left outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 hover:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Switch workspace"
 			>
-				<span class="flex size-7 shrink-0 items-center justify-center bg-muted text-xs font-medium"
+				<span
+					class="flex size-7 shrink-0 items-center justify-center bg-muted text-xs font-medium group-data-[collapsible=icon]:size-8"
 					>{dashboard.workspace?.name.slice(0, 1).toUpperCase() || 'V'}</span
 				>
 				<span class="min-w-0 flex-1 group-data-[collapsible=icon]:hidden"
