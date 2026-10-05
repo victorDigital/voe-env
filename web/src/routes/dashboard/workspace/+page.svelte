@@ -205,6 +205,7 @@
 					</p>
 				</div>
 				{#if canManage}<Button
+						hotKey={{ keys: 'n', description: 'Invite member', category: 'Workspace' }}
 						size="sm"
 						disabled={busy}
 						onclick={() => {
@@ -458,7 +459,16 @@
 			<ActionError bind:error /><Dialog.Footer
 				><Button variant="outline" disabled={busy} onclick={() => (inviteOpen = false)}
 					>Cancel</Button
-				><Button type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send invitation'}</Button
+				><Button
+					type="submit"
+					loading={busy}
+					disabled={busy}
+					hotKey={{
+						keys: 'mod+enter',
+						description: 'Send invitation',
+						category: 'Workspace',
+						allowInInput: true
+					}}>{busy ? 'Sending…' : 'Send invitation'}</Button
 				></Dialog.Footer
 			>
 		</form></Dialog.Content

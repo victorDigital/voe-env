@@ -8,6 +8,9 @@
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
 	import { Label } from '#lib/components/ui/label/index.ts';
+	import { getHotkeyManager, useHotkeys } from '#lib/hotkeys/manager.svelte.ts';
+	import { ariaKeys, formatKeys } from '#lib/hotkeys/utils.ts';
+	import RiKeyboardLine from 'remixicon-svelte/icons/keyboard-line';
 	import InstallCliDialog from './InstallCliDialog.svelte';
 	import { useDashboard } from '#lib/dashboard.svelte.ts';
 	import { authClient } from '#lib/auth-client.ts';
@@ -38,9 +41,49 @@
 	let error = $state('');
 	let creating = $state(false);
 	const navigation = [
-		{ label: 'Vault', href: '/dashboard/env', icon: RiFolderLockLine },
-		{ label: 'Workspace settings', href: '/dashboard/workspace', icon: RiSettings3Line }
+		{ label: 'Vault', href: '/dashboard/env', icon: RiFolderLockLine, keys: 'shift+v' },
+		{
+			label: 'Workspace settings',
+			href: '/dashboard/workspace',
+			icon: RiSettings3Line,
+			keys: 'shift+w'
+		}
 	];
+	const hotkeys = getHotkeyManager()!;
+	function destination(href: string) {
+		return `${href}${dashboard.selected ? '?workspace=' + encodeURIComponent(dashboard.selected) : ''}`;
+	}
+	function navigate(href: string) {
+		sidebar.setOpenMobile(false);
+		goto(destination(href));
+	}
+	function openInstall() {
+		installOpen = true;
+		sidebar.setOpenMobile(false);
+	}
+	useHotkeys('navigation', () => [
+		...navigation.map((item) => ({
+			id: item.href,
+			keys: item.keys,
+			description: item.label,
+			category: 'Navigation',
+			handler: () => navigate(item.href)
+		})),
+		{
+			id: 'account',
+			keys: 'shift+a',
+			description: 'Account settings',
+			category: 'Navigation',
+			handler: () => navigate('/dashboard/account')
+		},
+		{
+			id: 'install',
+			keys: 'shift+i',
+			description: 'Install CLI',
+			category: 'Navigation',
+			handler: openInstall
+		}
+	]);
 	async function select(id: string) {
 		dashboard.selected = id;
 		sidebar.setOpenMobile(false);
@@ -141,12 +184,13 @@
 				{#each navigation as item}<Sidebar.MenuItem
 						><Sidebar.MenuButton
 							isActive={page.url.pathname === item.href}
-							tooltipContent={item.label}
+							tooltipContent={`${item.label} (${formatKeys(item.keys, hotkeys.mac)})`}
 							class="h-9 text-xs text-muted-foreground"
 						>
 							{#snippet child({ props })}<a
 									{...props}
-									href={`${item.href}${dashboard.selected ? '?workspace=' + encodeURIComponent(dashboard.selected) : ''}`}
+									href={destination(item.href)}
+									aria-keyshortcuts={ariaKeys(item.keys, hotkeys.mac)}
 									aria-current={page.url.pathname === item.href ? 'page' : undefined}
 									onclick={() => sidebar.setOpenMobile(false)}
 									><item.icon /><span>{item.label}</span></a
@@ -160,11 +204,9 @@
 		<Sidebar.Menu
 			><Sidebar.MenuItem
 				><Sidebar.MenuButton
-					onclick={() => {
-						installOpen = true;
-						sidebar.setOpenMobile(false);
-					}}
-					tooltipContent="Install CLI"
+					onclick={openInstall}
+					aria-keyshortcuts={ariaKeys('shift+i', hotkeys.mac)}
+					tooltipContent={`Install CLI (${formatKeys('shift+i', hotkeys.mac)})`}
 					class="h-9 text-xs text-muted-foreground"
 					><RiTerminalBoxLine /><span>Install CLI</span></Sidebar.MenuButton
 				></Sidebar.MenuItem
@@ -198,11 +240,15 @@
 					/></DropdownMenu.Trigger
 				>
 				<DropdownMenu.Content side="top" align="start" class="w-60"
+					><DropdownMenu.Item onSelect={() => navigate('/dashboard/account')}
+						><RiUser3Line />Account settings</DropdownMenu.Item
 					><DropdownMenu.Item
 						onSelect={() => {
 							sidebar.setOpenMobile(false);
-							goto('/dashboard/account');
-						}}><RiUser3Line />Account settings</DropdownMenu.Item
+							hotkeys.helpOpen = true;
+						}}
+						><RiKeyboardLine />Keyboard shortcuts<DropdownMenu.Shortcut>?</DropdownMenu.Shortcut
+						></DropdownMenu.Item
 					><DropdownMenu.Separator /><DropdownMenu.Item disabled={signingOut} onSelect={onSignOut}
 						><RiLogoutBoxLine />{signingOut ? 'Signing out…' : 'Sign out'}</DropdownMenu.Item
 					></DropdownMenu.Content
@@ -241,7 +287,16 @@
 					variant="outline"
 					onclick={() => (dashboard.createOpen = false)}
 					disabled={creating}>Cancel</Button
-				><Button type="submit" disabled={creating || !$isUnlocked || !name.trim()}
+				><Button
+					type="submit"
+					loading={creating}
+					hotKey={{
+						keys: 'mod+enter',
+						description: 'Create workspace',
+						category: 'Workspace',
+						allowInInput: true
+					}}
+					disabled={creating || !$isUnlocked || !name.trim()}
 					>{creating ? 'Creating…' : 'Create workspace'}</Button
 				></Dialog.Footer
 			>

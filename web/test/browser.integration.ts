@@ -15,6 +15,9 @@ await sql`insert into session (id,user_id,token,expires_at,updated_at) values ($
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
+const command = await page.evaluate(() =>
+	/Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control'
+);
 page.setDefaultTimeout(15000);
 page.setDefaultNavigationTimeout(60000);
 await page.addInitScript(() => {
@@ -148,9 +151,13 @@ try {
 	await expect(page.getByRole('button', { name: 'Add secret', exact: true })).toBeVisible({
 		timeout: 15000
 	});
-	await page.getByRole('button', { name: 'New folder', exact: true }).click();
+	await page.locator('body').click({ position: { x: 1000, y: 50 } });
+	await page.keyboard.press('Shift+N');
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await page.keyboard.press(`${command}+Enter`);
+	await expect(page.getByLabel('Folder name', { exact: true })).toBeFocused();
 	await page.getByLabel('Folder name', { exact: true }).fill('production');
-	await page.getByRole('button', { name: 'Create folder', exact: true }).click();
+	await page.keyboard.press(`${command}+Enter`);
 	const folderTree = page.getByRole('navigation', { name: 'Folders', exact: true });
 	const folderPath = page.getByRole('navigation', { name: 'Folder path', exact: true });
 	await expect(folderPath).toBeVisible();
@@ -176,6 +183,9 @@ try {
 		folderTree.getByRole('button', { name: 'Collapse production', exact: true })
 	).toHaveAttribute('aria-expanded', 'true');
 	await expect(folderPath).toContainText('nested');
+	await page.keyboard.press('Alt+ArrowUp');
+	await expect(folderPath).not.toContainText('nested');
+	await folderTree.getByRole('button', { name: 'nested', exact: true }).click();
 	await page.getByRole('button', { name: 'Folder actions', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Delete empty folder', exact: true }).click();
 	await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
@@ -219,12 +229,28 @@ try {
 		);
 	}
 	await page.setViewportSize({ width: 1440, height: 1000 });
-	await page.getByRole('button', { name: 'Add secret', exact: true }).click();
+	await page.keyboard.press('n');
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await page.getByRole('dialog').getByRole('heading', { name: 'Add secret', exact: true }).click();
+	const shortcutURL = page.url();
+	await page.keyboard.press('Shift+W');
+	expect(page.url()).toBe(shortcutURL);
+	await page.keyboard.press('n');
+	await expect(page.getByRole('dialog')).toHaveCount(1);
 	await page.getByLabel('Name', { exact: true }).fill('API_KEY');
 	await page.getByLabel('Value', { exact: true }).fill('browser-test-only');
-	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
+	await page.keyboard.press(`${command}+Enter`);
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.getByText('API_KEY', { exact: true })).toBeVisible();
+	await page.keyboard.press('/');
+	await expect(page.getByLabel('Search this folder')).toBeFocused();
+	await page.keyboard.type('n?N');
+	await page.keyboard.press(`${command}+b`);
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Toggle navigation' })).toHaveAttribute(
+		'aria-expanded',
+		'true'
+	);
 	await page.getByLabel('Search this folder').fill('no-match');
 	await expect(page.getByRole('status').filter({ hasText: 'No matches' })).toBeVisible();
 	await page.getByRole('button', { name: 'Clear filter', exact: true }).click();
@@ -297,11 +323,96 @@ try {
 	await page.getByRole('menuitem', { name: 'Delete secret' }).click();
 	await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
 	await expect(longRow).toHaveCount(0);
+	await expect(page.getByRole('alertdialog')).toHaveCount(0);
 	await page.getByLabel('Search this folder').fill('');
 	const vaultURL = page.url();
-	await page.getByRole('button', { name: 'Install CLI', exact: true }).click();
+	await page.getByRole('button', { name: 'Hide values' }).focus();
+	await page.keyboard.press('Shift+E');
+	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible();
+	await page.keyboard.press('Shift+E');
+	await page.keyboard.press(`${command}+b`);
+	await expect(page.getByRole('button', { name: 'Toggle navigation' })).toHaveAttribute(
+		'aria-expanded',
+		'false'
+	);
+	await page.keyboard.press(`${command}+b`);
+	await expect(page.getByRole('button', { name: 'Toggle navigation' })).toHaveAttribute(
+		'aria-expanded',
+		'true'
+	);
+	await page.evaluate(() => {
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', repeat: true, bubbles: true }));
+		window.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'n', isComposing: true, bubbles: true })
+		);
+	});
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.keyboard.press('Shift+?');
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('Keyboard shortcuts');
+	await expect(page.getByRole('dialog')).toContainText('Add secret');
+	for (const width of [1440, 390, 320]) {
+		await page.setViewportSize({ width, height: 844 });
+		expect(
+			await page
+				.getByRole('dialog')
+				.evaluate(
+					(dialog) =>
+						dialog.scrollWidth <= dialog.clientWidth &&
+						dialog.getBoundingClientRect().left >= 0 &&
+						dialog.getBoundingClientRect().right <= innerWidth
+				)
+		).toBe(true);
+	}
+	await page.screenshot({ path: '/tmp/voe-shortcuts-mobile.png' });
+	await page.keyboard.press('Escape');
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await page.keyboard.down('Alt');
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('Keyboard shortcuts');
+	await page.keyboard.up('Alt');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Account menu' }).click();
+	await page.getByRole('menuitem', { name: 'Keyboard shortcuts' }).click();
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('Keyboard shortcuts');
+	await expect
+		.poll(() =>
+			page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement))
+		)
+		.toBe(true);
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.keyboard.press('Shift+I');
 	await expect(page.getByRole('dialog')).toBeVisible();
 	await expect(page.getByLabel('Installation command')).toContainText('/install.sh');
+	await page.evaluate(() => {
+		const original = navigator.clipboard.writeText;
+		let release: () => void;
+		Object.assign(window, {
+			finishClipboard: () => {
+				release();
+				navigator.clipboard.writeText = original;
+			}
+		});
+		navigator.clipboard.writeText = () =>
+			new Promise<void>((resolve) => {
+				release = resolve;
+			});
+	});
+	await page.keyboard.press('Shift+C');
+	await expect(
+		page.getByRole('button', { name: 'Copy install command', exact: true })
+	).toBeDisabled();
+	await expect(
+		page.getByRole('button', { name: 'Copy install command', exact: true })
+	).toHaveAttribute('data-loading', 'true');
+	await page.keyboard.press('Shift+C');
+	await page.evaluate(() =>
+		(window as typeof window & { finishClipboard: () => void }).finishClipboard()
+	);
+	await expect(page.getByRole('button', { name: 'Command copied', exact: true })).toBeEnabled();
+	await expect(page.getByRole('button', { name: 'Command copied', exact: true })).toHaveAttribute(
+		'data-loading',
+		'false'
+	);
 	await page.getByRole('tab', { name: 'Windows' }).click();
 	await expect(page.getByLabel('Installation command')).toContainText('/install.ps1');
 	expect(page.url()).toBe(vaultURL);
@@ -310,7 +421,7 @@ try {
 	await page.getByRole('button', { name: 'Switch workspace' }).click();
 	await expect(page.getByRole('menuitem', { name: 'Browser workspace' })).toBeVisible();
 	await page.keyboard.press('Escape');
-	await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+	await page.keyboard.press('Shift+W');
 	await expect(page.getByRole('heading', { name: 'Browser workspace' })).toBeVisible();
 	await expect(folderPath).toHaveCount(0);
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
@@ -337,7 +448,8 @@ try {
 	);
 	expect(requests.length).toBe(settingsVerificationCount + 1);
 	await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
-	await page.getByRole('button', { name: 'Invite member', exact: true }).click();
+	await page.keyboard.press('n');
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('Invite member');
 	await page.getByLabel('Role', { exact: true }).click();
 	await page.getByRole('option', { name: 'Viewer', exact: true }).click();
 	await expect(page.getByText('Can read secrets.', { exact: true })).toBeVisible();
@@ -362,7 +474,11 @@ try {
 	await expect(page.getByRole('button', { name: 'Unlock vault', exact: true })).toBeEnabled();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	const verificationCount = requests.length;
-	await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+	await page.getByRole('button', { name: 'Unlock vault', exact: true }).focus();
+	await page.keyboard.press('n');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	expect(requests.length).toBe(verificationCount);
+	await page.keyboard.press('Shift+U');
 	await expect(page.getByRole('button', { name: 'Lock vault', exact: true })).toBeVisible();
 	expect(requests.length).toBe(verificationCount + 1);
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -520,7 +636,7 @@ try {
 		expect(request).not.toContain('prf');
 	}
 	console.log(
-		'PASS: Chromium PRF onboarding, recovery, secret CRUD, folder tree navigation, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
+		'PASS: Chromium PRF onboarding, recovery, secret CRUD, folder tree navigation, guarded keyboard shortcuts, responsive shortcut help, async button loading, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
 	);
 } catch (e) {
 	await page.screenshot({ path: '/tmp/voe-browser-failure.png', fullPage: true });

@@ -2,14 +2,18 @@
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { ModeWatcher } from 'mode-watcher';
+	import { createHotkeyManager } from '#lib/hotkeys/manager.svelte.ts';
+	import HotkeyHelp from '#lib/hotkeys/HotkeyHelp.svelte';
 
 	let { children } = $props();
+	createHotkeyManager();
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 <ModeWatcher />
 <a href="#main-content" class="skip-link">Skip to content</a>
 {@render children()}
+<HotkeyHelp />
 
 <style>
 	.skip-link {

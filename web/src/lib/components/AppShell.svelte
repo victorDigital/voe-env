@@ -49,7 +49,11 @@
 	<AppSidebar {user} {signingOut} onSignOut={signOut} />
 	<Sidebar.Inset id="main-content" class="min-w-0">
 		<header class="flex h-12 shrink-0 items-center gap-3 border-b border-border px-1.5">
-			<Sidebar.Trigger aria-label="Toggle navigation" class="size-9 shrink-0" />
+			<Sidebar.Trigger
+				aria-label="Toggle navigation"
+				class="size-9 shrink-0"
+				hotKey={{ keys: 'mod+b', description: 'Toggle navigation', category: 'Navigation' }}
+			/>
 			{#if dashboard.header && $isUnlocked}
 				{@render dashboard.header()}
 			{:else}
@@ -70,6 +74,8 @@
 					aria-label="Lock vault"
 					title="Lock vault"
 					onclick={lock}
+					showHotKey={false}
+					hotKey={{ keys: 'shift+l', description: 'Lock vault', category: 'Vault' }}
 					><RiLockLine class="size-3.5" /><span class={dashboard.header ? 'hidden sm:inline' : ''}
 						>Lock vault</span
 					></Button

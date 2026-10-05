@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { useHotkeys } from '#lib/hotkeys/manager.svelte.ts';
 	import ActionError from '#lib/components/ActionError.svelte';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
@@ -42,6 +43,7 @@
 	let error = $state('');
 	let notice = $state('');
 	let query = $state('');
+	let searchInput = $state<HTMLInputElement | null>(null);
 	let folderName = $state('');
 	let secretName = $state('');
 	let secretValue = $state('');
@@ -75,6 +77,30 @@
 		}
 		return result;
 	});
+	useHotkeys('vault', () => [
+		{
+			id: 'filter',
+			keys: '/',
+			description: 'Filter secrets',
+			category: 'Vault',
+			enabled: () => $isUnlocked && hasSecrets && !busy,
+			element: () => searchInput,
+			handler: () => {
+				searchInput?.focus();
+				searchInput?.select();
+			}
+		},
+		{
+			id: 'parent',
+			keys: 'alt+arrowup',
+			description: 'Parent folder',
+			category: 'Navigation',
+			enabled: () => $isUnlocked && !!currentFolder?.parentId && !busy,
+			handler: () => {
+				if (currentFolder?.parentId) navigate(currentFolder.parentId);
+			}
+		}
+	]);
 	$effect(() => {
 		selected;
 		dashboard.revision;
@@ -336,6 +362,8 @@
 							<Input
 								class="h-9 border-transparent bg-muted/30 pl-8 focus-visible:border-input"
 								aria-label="Search this folder"
+								aria-keyshortcuts="/"
+								bind:ref={searchInput}
 								placeholder="Filter…"
 								bind:value={query}
 							/>
@@ -349,6 +377,7 @@
 								aria-label={revealed ? 'Hide values' : 'Show values'}
 								title={revealed ? 'Hide values' : 'Show values'}
 								onclick={() => (revealed = !revealed)}
+								hotKey={{ keys: 'shift+e', description: 'Toggle secret values', category: 'Vault' }}
 								>{#if revealed}<RiEyeOffLine />{:else}<RiEyeLine />{/if}</Button
 							>
 						{/if}
@@ -358,13 +387,19 @@
 								class="size-8 px-0 lg:w-auto lg:px-2.5"
 								aria-label="New folder"
 								title="New folder"
+								showHotKey={false}
+								hotKey={{ keys: 'shift+n', description: 'New folder', category: 'Vault' }}
 								disabled={busy}
 								onclick={() => {
 									folderOpen = true;
 									error = '';
 								}}><RiFolderAddLine /><span class="hidden lg:inline">New folder</span></Button
 							>
-							<Button disabled={busy} onclick={() => openSecret()}><RiAddLine />Add secret</Button>
+							<Button
+								disabled={busy}
+								hotKey={{ keys: 'n', description: 'Add secret', category: 'Vault' }}
+								onclick={() => openSecret()}><RiAddLine />Add secret</Button
+							>
 						{/if}
 					</div>
 				</div>
@@ -483,7 +518,16 @@
 			<ActionError bind:error /><Dialog.Footer
 				><Button variant="outline" disabled={busy} onclick={() => (secretOpen = false)}
 					>Cancel</Button
-				><Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save secret'}</Button
+				><Button
+					type="submit"
+					loading={busy}
+					disabled={busy}
+					hotKey={{
+						keys: 'mod+enter',
+						description: 'Save secret',
+						category: 'Vault',
+						allowInInput: true
+					}}>{busy ? 'Saving…' : 'Save secret'}</Button
 				></Dialog.Footer
 			>
 		</form></Dialog.Content
@@ -515,7 +559,17 @@
 			<ActionError bind:error /><Dialog.Footer
 				><Button variant="outline" disabled={busy} onclick={() => (folderOpen = false)}
 					>Cancel</Button
-				><Button type="submit" disabled={busy}>Create folder</Button></Dialog.Footer
+				><Button
+					type="submit"
+					loading={busy}
+					disabled={busy}
+					hotKey={{
+						keys: 'mod+enter',
+						description: 'Create folder',
+						category: 'Vault',
+						allowInInput: true
+					}}>Create folder</Button
+				></Dialog.Footer
 			>
 		</form></Dialog.Content
 	></Dialog.Root

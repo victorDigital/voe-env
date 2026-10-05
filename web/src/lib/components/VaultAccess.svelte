@@ -68,6 +68,7 @@
 				{#snippet child({ props })}<Button
 						{...props}
 						variant={screen ? 'default' : 'outline'}
+						hotKey={{ keys: 'shift+u', description: 'Set up vault', category: 'Vault' }}
 						disabled={busy}>Set up vault</Button
 					>{/snippet}
 			</Dialog.Trigger>
@@ -75,6 +76,8 @@
 			<Button
 				variant={screen ? 'default' : 'outline'}
 				class={screen ? 'h-9 gap-2 px-4' : ''}
+				showHotKey={false}
+				hotKey={{ keys: 'shift+u', description: 'Unlock vault', category: 'Vault' }}
 				disabled={busy || exists === null}
 				onclick={() => run(signInAndUnlock)}
 			>

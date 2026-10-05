@@ -53,7 +53,8 @@
 					variant="ghost"
 					size="icon-sm"
 					aria-label={copied ? 'Command copied' : 'Copy install command'}
-					onclick={copy}
+					onClickPromise={copy}
+					hotKey={{ keys: 'shift+c', description: 'Copy install command', category: 'CLI' }}
 					>{#if copied}<RiCheckLine />{:else}<RiFileCopyLine />{/if}</Button
 				>
 			</div>
