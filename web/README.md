@@ -15,7 +15,7 @@ Use `http://localhost:5173` for local passkey development. Hosted origins requir
 
 Configure `EMAIL_API_KEY` with a Resend API key and `EMAIL_FROM` with a verified sender. Email links bootstrap verified accounts and invitation acceptance. Existing vault access still requires an enrolled PRF passkey or offline recovery key. Password sign-in is disabled. Do not deploy this release before testing email delivery and the supported passkey providers.
 
-The app applies checked-in migrations at startup. Back up before deploying. The new tables are additive; legacy ciphertext and shares are retained. Legacy vault/share APIs now return 410 and old CLIs must be upgraded.
+The app applies checked-in database migrations at startup. A fresh installation starts with account setup, a passkey, an offline recovery key, and a workspace.
 
 ## Encryption and authorization
 
@@ -28,19 +28,13 @@ The app applies checked-in migrations at startup. Back up before deploying. The 
 - Removing members/devices blocks reads immediately and pauses writes. An unlocked admin replaces every folder key and ciphertext and every remaining recipient envelope in one version-checked transaction. Rewrapping existing folder keys is not treated as rotation.
 - An admin-assisted identity reset requires another provisioned owner/admin in every affected workspace. The user signs in again by email, confirms the reset, enrolls a new identity, and waits for verified admin provisioning. A lone owner needs their original recovery key or a working passkey.
 
-Workspace reads/writes currently use bounded whole-workspace snapshots: at most 2,000 folders, 10,000 secrets, 1,000 recipients, and a 16 MB JSON request. This keeps migration and rotation atomic. A failed operation can be retried from the last committed revision; larger deployments need chunked staging before these limits are raised.
+Workspace reads/writes currently use bounded whole-workspace snapshots: at most 2,000 folders, 10,000 secrets, 1,000 recipients, and a 16 MB JSON request. This keeps writes and key rotation atomic. A failed operation can be retried from the last committed revision; larger deployments need chunked staging before these limits are raised.
 
 Names, memberships, roles, and audit metadata remain visible to the server. E2EE cannot revoke downloaded plaintext or protect against malicious client code delivered by a compromised web origin. Rotate the actual downstream credentials after a suspected compromise.
 
 ## Dashboard
 
 Switch workspaces from the sidebar. Workspace settings manage invitations, member roles, encryption access, and workspace devices. The account menu opens passkey and CLI device settings. Install CLI opens an inline dialog; documentation lives in the sidebar footer.
-
-## Migration
-
-Open **Account settings → Migrate vaults** to copy legacy ciphertext into an owner-only personal workspace. The client unlocks each old password domain, re-encrypts every value, downloads it again, and compares every plaintext before completing the migration. A server checkpoint records the destination and source digest before upload. Interrupted uploads can be retried; if the upload committed, use **Verify completed migration**. Source data is frozen, and destination revisions guard verification.
-
-Old share recipients keep only their previous archive access. Invite them explicitly to a workspace once its complete audience has been reviewed. Retain the database backup and old browser keys; do not drop legacy tables yet. Once a migrated workspace accepts new writes, rollback needs reconciliation rather than restoring an old snapshot over it.
 
 ## Verification
 
@@ -58,7 +52,7 @@ bunx playwright install chromium
 bun test/browser.integration.ts
 ```
 
-The browser test uses Chromium's virtual PRF authenticator for onboarding, recovery, a second passkey, and encrypted CRUD. It also checks secret-column bounds, filtering, install dialogs, mobile navigation, role selection, and device revocation. This is not a compatibility certification for real iCloud, Google, Windows, or hardware passkey providers. Check supported devices and provider sync before migrating production data. Test Resend delivery against a controlled mailbox separately.
+The browser test uses Chromium's virtual PRF authenticator for onboarding, recovery, a second passkey, and encrypted CRUD. It also checks secret-column bounds, filtering, install dialogs, mobile navigation, role selection, and device revocation. This is not a compatibility certification for real iCloud, Google, Windows, or hardware passkey providers. Check supported devices and provider sync before using production secrets. Test Resend delivery against a controlled mailbox separately.
 
 Set `VOE_TEST_CLI=1` for the browser integration script to also exercise the real built `cli/target/debug/ve` binary. This creates and deletes a synthetic localhost:5174 entry in the native OS credential store and uses a temporary project directory. Build the CLI first.
 

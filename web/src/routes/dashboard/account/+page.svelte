@@ -191,16 +191,6 @@
 				>
 			</div>
 		</section>{/if}
-	<section class="border-t pt-6">
-		<h2 class="mb-3 text-sm font-medium">Legacy vaults</h2>
-		<div class="flex flex-wrap gap-2">
-			<Button variant="outline" size="sm" href="/dashboard/migrate">Migrate vaults</Button><Button
-				variant="ghost"
-				size="sm"
-				href="/dashboard/legacy">View archive</Button
-			>
-		</div>
-	</section>
 </div>
 <ConfirmAction
 	bind:error

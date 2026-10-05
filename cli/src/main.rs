@@ -402,9 +402,6 @@ fn local_values() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     for entry in dotenvy::from_path_iter(".env")? {
         let (key, value) = entry?;
-        if key == "VE_VAULT_KEYPASS" {
-            continue;
-        }
         if !regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")?.is_match(&key) {
             return Err(format!("Invalid key: {key}").into());
         }

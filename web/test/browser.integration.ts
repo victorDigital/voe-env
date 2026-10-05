@@ -16,6 +16,7 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
 page.setDefaultTimeout(15000);
+page.setDefaultNavigationTimeout(60000);
 await page.addInitScript(() => {
 	const get = navigator.credentials.get.bind(navigator.credentials);
 	navigator.credentials.get = async (options) => {
@@ -231,56 +232,8 @@ try {
 	await page.screenshot({ path: '/tmp/voe-workspace-mobile.png', fullPage: true });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
-	const oldPassword = 'legacy-test-password';
-	const material = await crypto.subtle.importKey(
-		'raw',
-		new TextEncoder().encode(oldPassword),
-		'PBKDF2',
-		false,
-		['deriveKey']
-	);
-	const oldKey = await crypto.subtle.deriveKey(
-		{
-			name: 'PBKDF2',
-			salt: new TextEncoder().encode('fixedsalt'),
-			iterations: 100000,
-			hash: 'SHA-256'
-		},
-		material,
-		{ name: 'AES-GCM', length: 256 },
-		false,
-		['encrypt']
-	);
-	const nonce = crypto.getRandomValues(new Uint8Array(12));
-	const oldCipher = await crypto.subtle.encrypt(
-		{ name: 'AES-GCM', iv: nonce },
-		oldKey,
-		new TextEncoder().encode('migrated-test-value')
-	);
-	await sql`insert into env_vault (id,"userId","fullKey","encryptedValue") values (${randomUUID()},${userId},'old:project:LEGACY_KEY',${Buffer.concat([nonce, Buffer.from(oldCipher)]).toString('base64')})`;
 	await page.setViewportSize({ width: 1440, height: 1000 });
-	await page.goto('http://localhost:5174/dashboard/migrate');
-	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
-	await page.getByLabel('old:project — legacy password', { exact: true }).fill(oldPassword);
-	await page.getByRole('checkbox').check();
-	await page.getByRole('button', { name: 'Migrate and verify', exact: true }).click();
-	await expect(page.getByText('Migration verified.', { exact: false })).toBeVisible({
-		timeout: 15000
-	});
-	const [migration] = await sql`select * from legacy_migration where user_id=${userId}`;
-	expect(migration.status).toBe('complete');
-	const [{ count }] =
-		await sql`select count(*)::int as count from member where organization_id=${migration.organization_id}`;
-	expect(count).toBe(1);
-	await page.reload();
-	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
-	await page.getByLabel('old:project — legacy password', { exact: true }).fill(oldPassword);
-	await page.getByRole('checkbox').check();
-	await page.getByRole('button', { name: 'Verify completed migration', exact: true }).click();
-	await expect(page.getByText('Every migrated value verified.')).toBeVisible();
-	console.log(
-		'PASS: browser migration, read-back verification, retained source, personal audience, and resumed verification'
-	);
+
 	if (process.env.VOE_TEST_CLI === '1') {
 		const directory = await mkdtemp(join(tmpdir(), 'voe-cli-e2e-'));
 		const executable = resolve('../cli/target/debug/ve');
@@ -337,21 +290,16 @@ try {
 			const originalConfig = await readFile(join(directory, '.voe.json'), 'utf8');
 			await run(['init', '--org', 'browser WORKSPACE', '--path', 'production']);
 			expect(await readFile(join(directory, '.voe.json'), 'utf8')).toBe(originalConfig);
-			await writeFile(
-				join(directory, '.env'),
-				'CLI_KEY="cli-round-trip"\nVE_VAULT_KEYPASS="legacy+password"\n',
-				{ mode: 0o600 }
-			);
+			await writeFile(join(directory, '.env'), 'CLI_KEY="cli-round-trip"\n', { mode: 0o600 });
 			await run(['push']);
 			await run(['pull', '--force']);
 			const pulled = await readFile(join(directory, '.env'), 'utf8');
 			expect(pulled).toContain('CLI_KEY="cli-round-trip"');
 			expect(pulled).toContain('API_KEY="browser-test-only"');
-			expect(pulled).not.toContain('VE_VAULT_KEYPASS');
 			const config = JSON.parse(await readFile(join(directory, '.voe.json'), 'utf8'));
 			expect(Object.keys(config).sort()).toEqual(['folderId', 'organizationId', 'server']);
 			console.log(
-				'PASS: real Rust CLI browser enrollment, OS credential-store persistence, init, encrypted push/pull and password removal'
+				'PASS: real Rust CLI browser enrollment, OS credential-store persistence, init, encrypted push/pull'
 			);
 		} finally {
 			authProcess.kill();

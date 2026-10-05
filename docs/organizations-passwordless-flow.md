@@ -53,7 +53,7 @@ sequenceDiagram
     S->>S: Store encrypted value
 ```
 
-An authenticated session and an unlocked client are separate states. Existing sessions may still need a local passkey unlock after reload or lock. Lock/logout clears decrypted key material from browser memory. PRF support must be proven on the supported browser/authenticator combinations before migration.
+An authenticated session and an unlocked client are separate states. Existing sessions may still need a local passkey unlock after reload or lock. Lock/logout clears decrypted key material from browser memory. PRF support must be proven on the supported browser/authenticator combinations before using production secrets.
 
 ## Invite a member
 
@@ -107,7 +107,7 @@ Push reverses the data path: encrypt on the CLI, check write permission on the s
 
 ## Recovery and removal
 
-- Lost passkey: authenticate through the controlled recovery flow, then unlock with the offline encryption recovery key or a second enrolled PRF-capable passkey and enroll a replacement. An unlocked owner/admin can instead provision organization access to a verified replacement encryption identity. Email alone cannot decrypt old data.
+- Lost passkey: authenticate through the controlled recovery flow, then unlock with the offline encryption recovery key or a second enrolled PRF-capable passkey and enroll a replacement. An unlocked owner/admin can instead provision organization access to a verified replacement encryption identity. Email alone cannot decrypt encrypted secrets.
 - Removed member/device: block subsequent API and envelope access immediately. An authorized unlocked client rotates organization and affected folder keys and provisions the remaining identities. Reject old-key writes; resume new writes after the new epoch is activated.
 - Previously downloaded plaintext remains accessible to its holder. Rotate downstream credentials where required. Losing all usable decrypting identities and backups permanently loses access to the data.
 

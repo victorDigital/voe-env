@@ -2,8 +2,6 @@ FROM oven/bun:latest
 
 WORKDIR /app
 
-RUN mkdir -p /data
-
 COPY package.json bun.lock ./
 
 RUN bun install --frozen-lockfile

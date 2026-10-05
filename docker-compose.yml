@@ -35,7 +35,6 @@ services:
       - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-}
       - VOE_CLI_RELEASE_URL=${VOE_CLI_RELEASE_URL:-https://github.com/victorDigital/voe-env/releases/latest/download}
     volumes:
-      - db-data:/data
       - db-password:/run/voe:ro
     depends_on:
       db:
@@ -43,6 +42,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  db-data:
   postgres-data:
   db-password:

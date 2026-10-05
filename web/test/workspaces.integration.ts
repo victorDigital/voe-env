@@ -70,30 +70,6 @@ async function expectStatus(
 }
 try {
 	for (const name of ['owner', 'admin', 'member', 'viewer', 'outsider']) await actor(name);
-	for (const [name, path, value] of [
-		['owner', 'prod_a:KEY', 'allowed-archive-ciphertext'],
-		['owner', 'prodXa:KEY', 'forbidden-wildcard-ciphertext'],
-		['outsider', 'prod_a:KEY', 'forbidden-owner-ciphertext']
-	])
-		await sql`insert into env_vault (id,"userId","fullKey","encryptedValue") values (${randomUUID()},${actors[name].id},${path},${value})`;
-	await sql`insert into folder_shares (id,"ownerId","sharedWithId","folderPath",permission,"encryptedVaultPassword") values (${randomUUID()},${actors.owner.id},${actors.viewer.id},'prod_a','read','test-envelope')`;
-	const archive = await fetch(`${base}/dashboard/legacy?owner=${actors.owner.id}&path=prod_a`, {
-		headers: { cookie: actors.viewer.cookie }
-	});
-	assert.equal(archive.status, 200);
-	const archiveHtml = await archive.text();
-	assert.ok(archiveHtml.includes('allowed-archive-ciphertext'));
-	assert.ok(!archiveHtml.includes('forbidden-wildcard-ciphertext'));
-	assert.ok(!archiveHtml.includes('forbidden-owner-ciphertext'));
-	for (const query of [
-		`owner=${actors.owner.id}&path=prodXa`,
-		`owner=${actors.outsider.id}&path=prod_a`
-	]) {
-		const denied = await fetch(`${base}/dashboard/legacy?${query}`, {
-			headers: { cookie: actors.viewer.cookie }
-		});
-		assert.equal(denied.status, 403);
-	}
 	const org = await expectStatus(200, 'owner', '/api/auth/organization/create', {
 		name: 'Test workspace',
 		slug: prefix
@@ -158,14 +134,6 @@ try {
 		]
 	};
 	await expectStatus(200, 'owner', route, initialize);
-	await sql`insert into legacy_migration (user_id,organization_id,source_digest) values (${actors.owner.id},${orgId},'test-digest')`;
-	await expectStatus(200, 'owner', '/api/auth/organization/set-active', { organizationId: orgId });
-	const blockedInvite = await expectStatus(403, 'owner', '/api/auth/organization/invite-member', {
-		email: actors.outsider.id + '@example.test',
-		role: 'viewer'
-	});
-	assert.match(blockedInvite.message, /Complete and verify migration/);
-	await sql`delete from legacy_migration where user_id = ${actors.owner.id}`;
 	await expectStatus(401, null, route);
 	await expectStatus(403, 'outsider', route);
 	let snapshot = await expectStatus(200, 'viewer', route);
@@ -204,10 +172,6 @@ try {
 		memberIdOrEmail: actors.viewer.id
 	});
 	await expectStatus(403, 'owner', '/api/auth/organization/leave', { organizationId: orgId });
-	await expectStatus(410, 'owner', '/api/vault/push', {
-		vaultPath: 'old',
-		envs: { A: 'ciphertext' }
-	});
 	await expectStatus(200, 'owner', route, {
 		action: 'provision',
 		revision: 1,
@@ -516,7 +480,7 @@ try {
 		'PASS: admin-assisted identity reset requires surviving key holders and blocks ownership actions until fresh key approval'
 	);
 	console.log(
-		'PASS: organization isolation, role matrix, ownership, legacy write rejection, provisioning, stale writes, complete rotation, CLI binding, and immediate device revocation'
+		'PASS: organization isolation, role matrix, ownership, provisioning, stale writes, complete rotation, CLI binding, and immediate device revocation'
 	);
 } finally {
 	await sql.end();

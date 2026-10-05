@@ -13,8 +13,7 @@ import {
 	encryptionIdentity,
 	encryptionDevice,
 	user,
-	auditEvent,
-	legacyMigration
+	auditEvent
 } from '#lib/server/db/schema.ts';
 import { authorize, lockWorkspace } from '#lib/server/vault-access.ts';
 import { recentlyVerified } from '#lib/server/recent-verification.ts';
@@ -131,7 +130,6 @@ const post: RequestHandler = async (event) => {
 			const [orgRow] = await tx.select().from(organization).where(eq(organization.id, org));
 			if (actor.membership.role !== 'owner' || body.name !== orgRow?.name)
 				error(403, 'Only an owner can delete a workspace after confirming its name');
-			await tx.delete(legacyMigration).where(eq(legacyMigration.organizationId, org));
 			await tx.delete(organization).where(eq(organization.id, org));
 			await tx.insert(auditEvent).values({
 				id: crypto.randomUUID(),

@@ -53,11 +53,7 @@
 					? 'Account settings'
 					: page.url.pathname === '/dashboard/workspace'
 						? 'Workspace settings'
-						: page.url.pathname.includes('migrate')
-							? 'Migration'
-							: page.url.pathname.includes('legacy')
-								? 'Archive'
-								: 'Vault'}</span
+						: 'Vault'}</span
 			>
 			{#if $isUnlocked}<Button
 					class="ml-auto text-muted-foreground"

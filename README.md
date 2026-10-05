@@ -12,10 +12,8 @@ For a hosted deployment, set `BETTER_AUTH_URL` to the public HTTPS URL before bu
 
 The database container generates its password on first startup and keeps it across restarts. PostgreSQL runs on the internal Compose network, and the web app applies migrations after the database is ready.
 
-The `postgres-data` volume stores the database and `db-password` stores its password. Include both volumes in backups. The existing `db-data` app volume is retained.
-
-This setup creates a separate database. Existing users and vault data from an external production database require a separate import.
+The `postgres-data` volume stores the database and `db-password` stores its password. Include both volumes in backups.
 
 See [CLI installation and commands](cli/README.md).
 
-This release replaces individual shares with organization-wide access and disables legacy writes. Back up before upgrading, configure email delivery, and migrate through workspace settings. Existing recipients are not added to organizations automatically. See [web setup, encryption, migration, and verification](web/README.md).
+Create a workspace, add folders and secrets, and invite members from workspace settings. CLI access is approved in the browser and can be revoked in account settings. See [web setup, encryption, and verification](web/README.md).

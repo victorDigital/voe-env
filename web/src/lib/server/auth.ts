@@ -11,7 +11,6 @@ import { building } from '$app/env';
 import { db } from './db';
 import {
 	encryptionIdentity,
-	legacyMigration,
 	organizationEnvelope,
 	workspace,
 	passkey as passkeyTable,
@@ -54,19 +53,6 @@ const securityPlugin = (): BetterAuthPlugin => ({
 						const orgId = String(
 							ctx.body?.organizationId || session?.session.activeOrganizationId || ''
 						);
-						const [migration] = await db
-							.select()
-							.from(legacyMigration)
-							.where(
-								and(
-									eq(legacyMigration.organizationId, orgId),
-									eq(legacyMigration.status, 'pending')
-								)
-							);
-						if (migration)
-							throw new APIError('FORBIDDEN', {
-								message: 'Complete and verify migration before inviting members.'
-							});
 						const [state] = await db
 							.select()
 							.from(workspace)

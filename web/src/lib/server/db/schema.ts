@@ -1,4 +1,4 @@
-import { sql, relations } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import {
 	pgTable,
 	text,
@@ -6,7 +6,6 @@ import {
 	boolean,
 	index,
 	integer,
-	json,
 	unique,
 	foreignKey,
 	check,
@@ -19,7 +18,6 @@ export const user = pgTable('user', {
 	email: text('email').notNull().unique(),
 	emailVerified: boolean('email_verified').default(false).notNull(),
 	image: text('image'),
-	publicKey: text('public_key'),
 	createdAt: timestamp('created_at').defaultNow().notNull(),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()
@@ -87,26 +85,6 @@ export const verification = pgTable(
 	(table) => [index('verification_identifier_idx').on(table.identifier)]
 );
 
-export const envVault = pgTable(
-	'env_vault',
-	{
-		id: text('id').primaryKey(),
-		userId: text('userId')
-			.notNull()
-			.references(() => user.id),
-		fullKey: text('fullKey').notNull(),
-		encryptedValue: text('encryptedValue').notNull(),
-		createdAt: timestamp('createdAt').defaultNow().notNull(),
-		updatedAt: timestamp('updatedAt')
-			.defaultNow()
-			.$onUpdate(() => /* @__PURE__ */ new Date())
-			.notNull()
-	},
-	(table) => ({
-		userKeyUnique: unique('env_vault_userId_fullKey_unique').on(table.userId, table.fullKey)
-	})
-);
-
 export const deviceCode = pgTable('deviceCode', {
 	id: text('id').primaryKey(),
 	deviceCode: text('deviceCode').notNull(),
@@ -124,40 +102,6 @@ export const deviceCode = pgTable('deviceCode', {
 		.$onUpdate(() => /* @__PURE__ */ new Date())
 		.notNull()
 });
-
-export const deviceLog = pgTable('deviceLog', {
-	id: text('id').primaryKey(),
-	userId: text('userId')
-		.notNull()
-		.references(() => user.id),
-	clientId: text('clientId').notNull(),
-	userCode: text('userCode').notNull(),
-	scope: text('scope'),
-	approvedAt: timestamp('approvedAt').notNull()
-});
-
-export const folderShares = pgTable(
-	'folder_shares',
-	{
-		id: text('id').primaryKey(),
-		ownerId: text('ownerId')
-			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
-		sharedWithId: text('sharedWithId')
-			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
-		folderPath: text('folderPath').notNull(),
-		permission: text('permission').notNull().$type<'read' | 'readwrite'>(),
-		encryptedVaultPassword: text('encryptedVaultPassword').notNull(),
-		createdAt: timestamp('createdAt').defaultNow().notNull(),
-		expiresAt: timestamp('expiresAt')
-	},
-	(table) => [
-		index('folder_shares_ownerId_idx').on(table.ownerId),
-		index('folder_shares_sharedWithId_idx').on(table.sharedWithId),
-		unique('folder_shares_unique').on(table.ownerId, table.sharedWithId, table.folderPath)
-	]
-);
 
 export const organization = pgTable('organization', {
 	id: text('id').primaryKey(),
@@ -319,17 +263,6 @@ export const auditEvent = pgTable('audit_event', {
 	actorId: text('actor_id').notNull(),
 	action: text('action').notNull(),
 	createdAt: timestamp('created_at').defaultNow().notNull()
-});
-export const legacyMigration = pgTable('legacy_migration', {
-	userId: text('user_id')
-		.primaryKey()
-		.references(() => user.id),
-	organizationId: text('organization_id')
-		.notNull()
-		.references(() => workspace.organizationId),
-	sourceDigest: text('source_digest').notNull(),
-	status: text('status').default('pending').notNull(),
-	completedAt: timestamp('completed_at')
 });
 export const passkeyVerification = pgTable('passkey_verification', {
 	sessionId: text('session_id')
