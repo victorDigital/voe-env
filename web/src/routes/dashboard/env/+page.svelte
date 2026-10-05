@@ -298,13 +298,13 @@
 {/snippet}
 
 <svelte:head><title>Vault · VOE</title></svelte:head>
-<div class="flex w-full flex-1 flex-col px-4 pt-4 pb-7 sm:px-8 md:py-0 md:pl-0 lg:pr-10">
-	{#if error && !secretOpen && !folderOpen}<p role="alert" class="mb-5 text-xs text-destructive">
+<div class="flex w-full flex-1 flex-col">
+	{#if error && !secretOpen && !folderOpen}<p role="alert" class="m-4 text-xs text-destructive">
 			{error}
 		</p>{/if}
 	<WorkspaceAccess userId={data.user.id} {snapshot} refresh={loadWorkspace}>
 		<div
-			class="grid min-w-0 gap-x-5 gap-y-3 md:flex-1 md:grid-cols-[12rem_minmax(0,1fr)] md:grid-rows-[1fr] md:gap-x-7 lg:grid-cols-[14rem_minmax(0,1fr)]"
+			class="grid min-w-0 md:flex-1 md:grid-cols-[12rem_minmax(0,1fr)] md:grid-rows-[1fr] lg:grid-cols-[14rem_minmax(0,1fr)]"
 		>
 			<aside
 				class="min-w-0 md:col-start-1 md:row-start-1 md:block md:border-r"
@@ -326,7 +326,7 @@
 					{/key}
 				</div>
 			</aside>
-			<div class="min-w-0 md:col-start-2 md:pt-4 md:pb-7">
+			<div class="min-w-0 p-4 md:col-start-2">
 				<div class="mb-3 flex min-h-9 items-center gap-2">
 					{#if hasSecrets}
 						<div class="relative min-w-0 flex-1 sm:max-w-xs">
