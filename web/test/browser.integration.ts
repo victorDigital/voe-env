@@ -164,10 +164,8 @@ try {
 	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toBeVisible();
 	await folderTree.getByRole('button', { name: 'Collapse production', exact: true }).click();
 	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toHaveCount(0);
-	await page
-		.getByRole('navigation', { name: 'Subfolders' })
-		.getByRole('button', { name: 'nested', exact: true })
-		.click();
+	await folderTree.getByRole('button', { name: 'Expand production', exact: true }).click();
+	await folderTree.getByRole('button', { name: 'nested', exact: true }).click();
 	await expect(folderTree.getByRole('button', { name: 'nested', exact: true })).toHaveAttribute(
 		'aria-current',
 		'location'
@@ -184,21 +182,13 @@ try {
 		'aria-current',
 		'location'
 	);
-	await expect(page.getByRole('status').filter({ hasText: 'Empty folder' })).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'No secrets' })).toBeVisible();
 	await expect(page.getByRole('table')).toHaveCount(0);
 	await expect(page.getByLabel('Search this folder')).toHaveCount(0);
 	await folderTree.getByRole('button', { name: 'Vault', exact: true }).click();
-	await page.getByLabel('Search this folder').fill('no-match');
-	await expect(page.getByRole('status').filter({ hasText: 'No matches' })).toBeVisible();
-	await page.getByRole('button', { name: 'Clear filter', exact: true }).click();
-	await expect(page.getByRole('navigation', { name: 'Subfolders' })).toBeVisible();
-	await page.getByLabel('Search this folder').fill('no-match');
-	await folderTree.getByRole('button', { name: 'Vault', exact: true }).click();
-	await expect(page.getByLabel('Search this folder')).toHaveValue('');
-	await page
-		.getByRole('navigation', { name: 'Subfolders' })
-		.getByRole('button', { name: 'production', exact: true })
-		.click();
+	await expect(page.getByRole('status').filter({ hasText: 'No secrets' })).toBeVisible();
+	await expect(page.getByLabel('Search this folder')).toHaveCount(0);
+	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await expect(folderTree.getByRole('button', { name: 'production', exact: true })).toHaveAttribute(
 		'aria-current',
 		'location'
@@ -224,6 +214,14 @@ try {
 	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.getByText('API_KEY', { exact: true })).toBeVisible();
+	await page.getByLabel('Search this folder').fill('no-match');
+	await expect(page.getByRole('status').filter({ hasText: 'No matches' })).toBeVisible();
+	await page.getByRole('button', { name: 'Clear filter', exact: true }).click();
+	await expect(page.getByText('API_KEY', { exact: true })).toBeVisible();
+	await page.getByLabel('Search this folder').fill('no-match');
+	await folderTree.getByRole('button', { name: 'Vault', exact: true }).click();
+	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
+	await expect(page.getByLabel('Search this folder')).toHaveValue('');
 	await page.getByRole('button', { name: 'Show values' }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
 	const longName = 'DOCUMENT_INTELLIGENCE_ENDPOINT_WITH_A_VERY_LONG_ENVIRONMENT_VARIABLE_NAME';

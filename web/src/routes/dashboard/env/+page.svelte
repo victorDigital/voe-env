@@ -56,18 +56,7 @@
 	let canWrite = $derived(
 		!!snapshot && permits(snapshot.role, 'write') && !snapshot.rotationRequired
 	);
-	let hasContents = $derived(
-		!!snapshot?.folders.some((folder) => folder.parentId === folderId) ||
-			!!snapshot?.secrets.some((secret) => secret.folderId === folderId)
-	);
 	let hasSecrets = $derived(!!snapshot?.secrets.some((secret) => secret.folderId === folderId));
-	let folders = $derived(
-		(
-			snapshot?.folders.filter(
-				(f) => f.parentId === folderId && f.name.toLowerCase().includes(query.toLowerCase())
-			) || []
-		).sort((a, b) => a.name.localeCompare(b.name))
-	);
 	let secrets = $derived(
 		(
 			snapshot?.secrets.filter(
@@ -319,7 +308,7 @@
 			</aside>
 			<div class="min-w-0 md:col-start-2 md:pb-7">
 				<div class="mb-3 flex min-h-9 items-center gap-2">
-					{#if hasContents}
+					{#if hasSecrets}
 						<div class="relative min-w-0 flex-1 sm:max-w-xs">
 							<RiSearchLine
 								class="pointer-events-none absolute top-2.5 left-2.5 size-3.5 text-muted-foreground"
@@ -359,21 +348,6 @@
 						{/if}
 					</div>
 				</div>
-				{#if folders.length}
-					<nav aria-label="Subfolders" class="mb-3 grid grid-cols-2 gap-x-3">
-						{#each folders as folder}
-							<button
-								onclick={() => navigate(folder.id)}
-								class="flex min-h-10 min-w-0 items-center gap-2 px-2 text-left text-xs hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-								title={folder.name}
-							>
-								<RiFolderLine class="size-4 shrink-0 text-muted-foreground" /><span class="truncate"
-									>{folder.name}</span
-								><RiArrowRightSLine class="ml-auto size-3.5 shrink-0 text-muted-foreground" />
-							</button>
-						{/each}
-					</nav>
-				{/if}
 				{#if secrets.length}
 					<div class="border-y">
 						<Table.Root class="w-full table-fixed text-xs" aria-label="Secrets">
@@ -432,14 +406,14 @@
 							</Table.Body>
 						</Table.Root>
 					</div>
-				{:else if !folders.length}
+				{:else}
 					<div
 						role="status"
 						class="flex min-h-32 items-center justify-center gap-2 text-xs text-muted-foreground"
 					>
 						{#if query}No matches<Button variant="link" size="sm" onclick={() => (query = '')}
 								>Clear filter</Button
-							>{:else}Empty folder{/if}
+							>{:else}No secrets{/if}
 					</div>
 				{/if}
 				<p role="status" class="text-xs text-muted-foreground" class:mt-2={!!notice}>{notice}</p>
