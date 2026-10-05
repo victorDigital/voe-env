@@ -73,7 +73,7 @@
 </script>
 
 <script lang="ts">
-	import { onNavigate } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import { Debounced } from 'runed';
 	import RiLoader4Line from 'remixicon-svelte/icons/loader-4-line';
 	import Kbd from '#lib/hotkeys/Kbd.svelte';
@@ -100,8 +100,12 @@
 		...rest
 	}: ButtonProps = $props();
 	const manager = getHotkeyManager();
-	const debouncedLoading = new Debounced(() => loading, 300);
-	let unavailable = $derived(disabled || loading);
+	let navigationLoading = $derived(
+		!!href && !!navigating.to && navigating.to.url.href === new URL(href, page.url.href).href
+	);
+	let pending = $derived(loading || navigationLoading);
+	const debouncedLoading = new Debounced(() => pending, 300);
+	let unavailable = $derived(disabled || pending);
 	let shortcutTitle = $derived(
 		hotKey
 			? `${title || hotKey.description} (${formatKeys(hotKey.keys, manager?.mac ?? false)})`
@@ -126,9 +130,6 @@
 					]
 				: []
 	);
-	onNavigate(() => {
-		loading = false;
-	});
 </script>
 
 <svelte:element
@@ -136,11 +137,11 @@
 	{...rest}
 	data-slot={rest['data-slot'] ?? 'button'}
 	data-loading={debouncedLoading.current}
-	aria-busy={loading || rest['aria-busy']}
+	aria-busy={pending || rest['aria-busy']}
 	title={shortcutTitle}
 	aria-keyshortcuts={hotKey ? ariaKeys(hotKey.keys, manager?.mac ?? false) : undefined}
 	type={href ? undefined : type}
-	href={href && !unavailable ? href : undefined}
+	href={href && !disabled ? href : undefined}
 	disabled={href ? undefined : unavailable}
 	aria-disabled={href ? unavailable : rest['aria-disabled']}
 	role={href && unavailable ? 'link' : rest.role}
@@ -156,16 +157,6 @@
 			event as MouseEvent & { currentTarget: EventTarget & HTMLButtonElement & HTMLAnchorElement }
 		);
 		if (event.defaultPrevented) return;
-		if (
-			href &&
-			rest.target !== '_blank' &&
-			!event.metaKey &&
-			!event.ctrlKey &&
-			!event.shiftKey &&
-			!event.altKey &&
-			event.button === 0
-		)
-			loading = true;
 		if (onClickPromise) {
 			loading = true;
 			try {

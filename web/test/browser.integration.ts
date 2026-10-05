@@ -72,6 +72,57 @@ const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
 	}
 });
 try {
+	await page.goto('http://localhost:5174/');
+	await page.waitForLoadState('networkidle');
+	const vaultLink = page.locator('.site-header nav a[data-slot="button"]');
+	await expect(vaultLink).toHaveAccessibleName('Open vault');
+	await expect(vaultLink).toBeVisible();
+	await expect(page.locator('dt code').filter({ hasText: /^ve init$/ })).toBeVisible();
+	await expect(page.getByText('ve init --path dev', { exact: true })).toHaveCount(0);
+	let finishNavigation!: () => void;
+	const navigationGate = new Promise<void>((resolve) => {
+		finishNavigation = resolve;
+	});
+	const dashboardData = '**/dashboard/__data.json*';
+	await page.route(dashboardData, async (route) => {
+		await navigationGate;
+		await route.continue();
+	});
+	const enteringVault = vaultLink.click();
+	try {
+		await expect(vaultLink).toHaveAttribute('aria-busy', 'true');
+		await expect(vaultLink).toHaveAttribute('data-loading', 'true');
+		await expect(vaultLink).toHaveAttribute('href', '/dashboard');
+	} finally {
+		finishNavigation();
+		await enteringVault;
+		await page.unroute(dashboardData);
+	}
+	await expect(page).toHaveURL('http://localhost:5174/dashboard/env');
+	await page.goBack();
+	await expect(vaultLink).toBeVisible();
+	await expect(vaultLink).toHaveAttribute('data-loading', 'false');
+	await expect(vaultLink).toHaveAttribute('aria-disabled', 'false');
+	await vaultLink.click();
+	await expect(page).toHaveURL('http://localhost:5174/dashboard/env');
+	const visitorContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+	try {
+		const visitor = await visitorContext.newPage();
+		await visitor.goto('http://localhost:5174/');
+		await visitor.waitForLoadState('networkidle');
+		await visitor.getByRole('link', { name: 'Sign up', exact: true }).click();
+		await expect(visitor).toHaveURL('http://localhost:5174/signup');
+		await expect(
+			visitor.getByRole('heading', { name: 'Your secrets. Your keys.', exact: true })
+		).toBeVisible();
+		await visitor.goBack();
+		await expect(visitor.getByRole('link', { name: 'Sign up', exact: true })).toHaveAttribute(
+			'data-loading',
+			'false'
+		);
+	} finally {
+		await visitorContext.close();
+	}
 	const inviteEmail = `${randomUUID()}@example.test`;
 	const orgResponse = await context.request.post(
 		'http://localhost:5174/api/auth/organization/create',
@@ -636,7 +687,7 @@ try {
 		expect(request).not.toContain('prf');
 	}
 	console.log(
-		'PASS: Chromium PRF onboarding, recovery, secret CRUD, folder tree navigation, guarded keyboard shortcuts, responsive shortcut help, async button loading, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
+		'PASS: Chromium PRF onboarding, recovery, secret CRUD, folder tree navigation, header signup/vault link navigation, guarded keyboard shortcuts, responsive shortcut help, async button loading, long-name layout, install modal, workspace role selector, mobile navigation, device revocation, backup passkey, and no PRF network serialization'
 	);
 } catch (e) {
 	await page.screenshot({ path: '/tmp/voe-browser-failure.png', fullPage: true });
