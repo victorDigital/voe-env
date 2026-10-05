@@ -11,11 +11,16 @@
 		recover,
 		type PendingSetup
 	} from '#lib/vault-client.ts';
-	let { userId, onready = () => {} }: { userId: string; onready?: () => void } = $props();
+	let {
+		userId,
+		onready = () => {},
+		autoOpen = true
+	}: { userId: string; onready?: () => void; autoOpen?: boolean } = $props();
 	let exists = $state<boolean | null>(null);
 	let open = $state(false);
 	$effect(() => {
-		open = !$isUnlocked;
+		if ($isUnlocked) open = false;
+		else if (autoOpen) open = true;
 	});
 	let busy = $state(false);
 	let error = $state('');

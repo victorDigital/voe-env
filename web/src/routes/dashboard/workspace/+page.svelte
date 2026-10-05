@@ -12,7 +12,13 @@
 	import WorkspaceAccess from '#lib/components/WorkspaceAccess.svelte';
 	import ConfirmAction from '#lib/components/ConfirmAction.svelte';
 	import { useDashboard } from '#lib/dashboard.svelte.ts';
-	import { api, organizationKey, type Snapshot } from '#lib/vault-client.ts';
+	import {
+		api,
+		organizationKey,
+		isUnlocked,
+		signInAndUnlock,
+		type Snapshot
+	} from '#lib/vault-client.ts';
 	import { authClient } from '#lib/auth-client.ts';
 	import { fingerprint, seal, bytes, wrapTo } from '#lib/vault-crypto.ts';
 	import { context, orgContext } from '#lib/vault-format.ts';
@@ -89,6 +95,7 @@
 		error = '';
 		notice = '';
 		try {
+			if (!$isUnlocked) await signInAndUnlock();
 			await action();
 		} catch (e) {
 			error = (e as Error).message;
@@ -186,7 +193,7 @@
 			{error}
 		</p>{/if}
 	{#if notice}<p role="status" class="mb-5 text-xs text-muted-foreground">{notice}</p>{/if}
-	<WorkspaceAccess userId={data.user.id} {snapshot} refresh={load}>
+	<WorkspaceAccess userId={data.user.id} {snapshot} refresh={load} requireUnlock={false}>
 		<section aria-labelledby="members-heading" class="mb-10">
 			<div class="mb-4 flex items-center justify-between gap-4">
 				<div>

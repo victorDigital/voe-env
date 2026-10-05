@@ -184,6 +184,25 @@ try {
 	await page.keyboard.press('Escape');
 	await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Browser workspace' })).toBeVisible();
+	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+	const settingsVerificationCount = requests.length;
+	await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.reload();
+	await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Workspace devices' })).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	expect(requests.length).toBe(settingsVerificationCount);
+	await page.getByRole('button', { name: 'Leave', exact: true }).click();
+	await page
+		.getByRole('alertdialog')
+		.getByRole('button', { name: 'Leave workspace', exact: true })
+		.click();
+	await expect(page.getByRole('alertdialog')).toContainText(
+		'Add another owner before removing the last owner'
+	);
+	expect(requests.length).toBe(settingsVerificationCount + 1);
+	await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
 	await page.getByRole('button', { name: 'Invite member', exact: true }).click();
 	await page.getByLabel('Role', { exact: true }).click();
 	await page.getByRole('option', { name: 'Viewer', exact: true }).click();
@@ -222,6 +241,14 @@ try {
 	await page.getByRole('menuitem', { name: 'Account settings' }).click();
 	await expect(page.getByText(deviceId.slice(0, 8), { exact: true })).toBeVisible();
 	await expect(page.locator('time[datetime="2026-10-05T10:30:00.000Z"]')).toBeVisible();
+	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+	await page.reload();
+	await expect(page.getByText(deviceId.slice(0, 8), { exact: true })).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Revoke access', exact: true })).toBeDisabled();
+	await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Lock vault', exact: true })).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
 	await page
 		.getByRole('alertdialog')

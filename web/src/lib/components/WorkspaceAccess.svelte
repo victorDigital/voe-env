@@ -5,6 +5,7 @@
 	import {
 		identity,
 		isUnlocked,
+		signInAndUnlock,
 		initializeWorkspace,
 		rotateWorkspace,
 		type Snapshot
@@ -16,12 +17,14 @@
 		userId,
 		snapshot,
 		refresh,
+		requireUnlock = true,
 		children
 	}: {
 		userId: string;
 		snapshot: Snapshot | null;
 		refresh: () => Promise<void>;
 		children: Snippet;
+		requireUnlock?: boolean;
 	} = $props();
 	const dashboard = useDashboard();
 	let identityFingerprint = $state('');
@@ -41,6 +44,7 @@
 		dashboard.working = true;
 		error = '';
 		try {
+			if (!$isUnlocked) await signInAndUnlock();
 			await action();
 			await refresh();
 		} catch (e) {
@@ -51,19 +55,21 @@
 	}
 </script>
 
-<VaultAccess {userId} onready={() => refresh()} />
-{#if $isUnlocked}
+<VaultAccess {userId} autoOpen={requireUnlock} onready={() => refresh()} />
+{#if $isUnlocked || !requireUnlock}
 	{#if error}<p role="alert" class="mb-5 text-xs text-destructive">{error}</p>{/if}
 	{#if !dashboard.selected}
 		<div class="flex min-h-80 flex-col items-center justify-center gap-4">
 			<h2 class="text-base font-medium">Your first workspace</h2>
-			<Button onclick={() => (dashboard.createOpen = true)}>Create workspace</Button>
+			<Button disabled={!$isUnlocked} onclick={() => (dashboard.createOpen = true)}
+				>Create workspace</Button
+			>
 		</div>
 	{:else if !snapshot}
 		<div role="status" class="py-16 text-center text-xs text-muted-foreground">
 			Loading workspace…
 		</div>
-	{:else if !snapshot.folders.length}
+	{:else if requireUnlock && !snapshot.folders.length}
 		<div class="mx-auto max-w-md py-16 text-center">
 			<h2 class="text-base font-medium">Set up workspace</h2>
 			<p class="mt-2 text-xs text-muted-foreground">An owner needs to enable encryption.</p>
@@ -74,7 +80,7 @@
 					>Initialize workspace</Button
 				>{/if}
 		</div>
-	{:else if !snapshot.envelopes.length}
+	{:else if requireUnlock && !snapshot.envelopes.length}
 		<div class="mx-auto max-w-md py-16">
 			<h2 class="text-base font-medium">Awaiting access</h2>
 			<p class="mt-2 text-sm text-muted-foreground">
