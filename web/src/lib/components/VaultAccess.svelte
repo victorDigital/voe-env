@@ -137,9 +137,6 @@
 							fill="currentColor"
 						/>
 					</svg>
-					<p class="mb-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
-						Encrypted vault
-					</p>
 					<h1 id="vault-locked-title" class="text-xl font-medium tracking-tight">
 						{exists === false ? 'Set up your vault' : 'Vault locked'}
 					</h1>
