@@ -46,7 +46,7 @@
 >
 	<AppSidebar {user} {signingOut} onSignOut={signOut} />
 	<Sidebar.Inset id="main-content" class="min-w-0">
-		<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-6">
+		<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-2.5">
 			<Sidebar.Trigger aria-label="Toggle navigation" class="size-9 shrink-0" />
 			<span class="text-xs text-muted-foreground"
 				>{page.url.pathname === '/dashboard/account'
