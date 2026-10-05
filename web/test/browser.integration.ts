@@ -69,6 +69,12 @@ const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
 });
 try {
 	await page.goto('http://localhost:5174/dashboard/env');
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCSS('position', 'fixed');
+	await expect(page.getByRole('button', { name: 'Create passkey', exact: true })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Set up vault', exact: true }).click();
 	await page.getByRole('button', { name: 'Create passkey', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Save your recovery key' })).toBeVisible({
 		timeout: 15000
