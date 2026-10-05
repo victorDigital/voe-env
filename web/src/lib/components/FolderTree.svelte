@@ -3,7 +3,7 @@
 	import type { Folder } from '#lib/vault-format.ts';
 	import RiArrowRightSLine from 'remixicon-svelte/icons/arrow-right-s-line';
 	import RiFolderLine from 'remixicon-svelte/icons/folder-line';
-	type Row = { folder: Folder; depth: number; guides: number[]; last: boolean };
+	type Row = { folder: Folder; depth: number };
 
 	let {
 		folders,
@@ -25,14 +25,7 @@
 	let rows = $derived.by(() => {
 		const result: Row[] = [];
 		const roots = children.get(null) || [];
-		const pending: Row[] = roots
-			.map((folder, index) => ({
-				folder,
-				depth: 0,
-				guides: [],
-				last: index === roots.length - 1
-			}))
-			.reverse();
+		const pending: Row[] = roots.map((folder) => ({ folder, depth: 0 })).reverse();
 		while (pending.length) {
 			const row = pending.pop()!;
 			result.push(row);
@@ -41,14 +34,40 @@
 				for (let i = siblings.length - 1; i >= 0; i--)
 					pending.push({
 						folder: siblings[i],
-						depth: row.depth + 1,
-						guides: row.depth && !row.last ? [...row.guides, row.depth - 1] : row.guides,
-						last: i === siblings.length - 1
+						depth: row.depth + 1
 					});
 			}
 		}
 		return result;
 	});
+	let branches = $derived.by(() => {
+		const indices = new Map(rows.map((row, index) => [row.folder.id, index]));
+		const result = new Map<number, number[]>();
+		rows.forEach((row, index) => {
+			const parent = row.folder.parentId ? indices.get(row.folder.parentId) : undefined;
+			if (parent === undefined) return;
+			const siblings = result.get(parent) || [];
+			siblings.push(index);
+			result.set(parent, siblings);
+		});
+		return result;
+	});
+	let lineWidth = $derived(Math.max(0, ...rows.map((row) => row.depth)) * 24 + 64);
+	function connectorPath(height: number) {
+		const result: string[] = [];
+		for (const [parent, siblings] of branches) {
+			const x = 16.5 + rows[parent].depth * 24;
+			const last = siblings[siblings.length - 1];
+			const y = (last + 0.5) * height + 0.5;
+			const end = (index: number) => x + (children.has(rows[index].folder.id) ? 13 : 35);
+			result.push(`M${x} ${(parent + 0.5) * height + 11.5} V${y - 4} L${x + 4} ${y} H${end(last)}`);
+			for (const index of siblings.slice(0, -1)) {
+				const y = (index + 0.5) * height + 0.5;
+				result.push(`M${x} ${y - 4} L${x + 4} ${y} H${end(index)}`);
+			}
+		}
+		return result.join(' ');
+	}
 	$effect(() => {
 		let folder = byId.get(selected);
 		const next = new Set(untrack(() => expanded));
@@ -66,50 +85,38 @@
 	}
 </script>
 
-<nav aria-label="Folders">
+{#snippet connectors(height: number, className: string)}
+	<svg
+		aria-hidden="true"
+		focusable="false"
+		class={`pointer-events-none absolute top-0 left-0 h-full ${className}`}
+		style:color="color-mix(in srgb, var(--muted-foreground) 30%, var(--background))"
+		width={lineWidth}
+		height={rows.length * height}
+		viewBox={`0 0 ${lineWidth} ${rows.length * height}`}
+		preserveAspectRatio="none"
+	>
+		<path
+			d={connectorPath(height)}
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1"
+			stroke-linecap="butt"
+			stroke-linejoin="miter"
+		/>
+	</svg>
+{/snippet}
+
+<nav aria-label="Folders" class="relative">
 	<ul>
-		{#each rows as { folder, depth, guides, last } (folder.id)}
+		{#each rows as { folder, depth } (folder.id)}
 			{@const name = folder.parentId ? folder.name : 'Vault'}
 			<li>
 				<div
-					class="relative flex h-11 min-w-0 items-center text-xs hover:bg-muted/50 md:h-9"
+					class="flex h-11 min-w-0 items-center text-xs hover:bg-muted/50 md:h-9"
 					class:bg-muted={selected === folder.id}
 					style:padding-left={`${depth * 24}px`}
 				>
-					<div
-						aria-hidden="true"
-						class="pointer-events-none absolute inset-0 text-muted-foreground/30"
-					>
-						{#each guides as level}
-							<span
-								class="absolute inset-y-0 border-l border-current"
-								style:left={`${16 + level * 24}px`}
-							></span>
-						{/each}
-						{#if depth}
-							<span
-								class="absolute top-0 border-l border-current"
-								style:left={`${16 + (depth - 1) * 24}px`}
-								style:height={last ? 'calc(50% - 4px)' : '100%'}
-							></span>
-							<span
-								class="absolute top-[calc(50%-4px)] origin-top-left rotate-45 border-t border-current"
-								style:left={`${16 + (depth - 1) * 24}px`}
-								style:width={`${4 * Math.SQRT2}px`}
-							></span>
-							<span
-								class="absolute top-1/2 border-t border-current"
-								style:left={`${20 + (depth - 1) * 24}px`}
-								style:width={children.has(folder.id) ? '9px' : '31px'}
-							></span>
-						{/if}
-						{#if children.has(folder.id) && expanded.has(folder.id)}
-							<span
-								class="absolute top-[calc(50%+11px)] bottom-0 border-l border-current"
-								style:left={`${16 + depth * 24}px`}
-							></span>
-						{/if}
-					</div>
 					{#if children.has(folder.id)}
 						<button
 							type="button"
@@ -140,4 +147,8 @@
 			</li>
 		{/each}
 	</ul>
+	{#if rows.length}
+		{@render connectors(44, 'md:hidden')}
+		{@render connectors(36, 'hidden md:block')}
+	{/if}
 </nav>
