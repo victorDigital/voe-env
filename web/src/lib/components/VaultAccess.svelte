@@ -15,14 +15,12 @@
 	let {
 		userId,
 		onready = () => {},
-		autoOpen = true,
 		screen = false
-	}: { userId: string; onready?: () => void; autoOpen?: boolean; screen?: boolean } = $props();
+	}: { userId: string; onready?: () => void; screen?: boolean } = $props();
 	let exists = $state<boolean | null>(null);
 	let open = $state(false);
 	$effect(() => {
 		if ($isUnlocked) open = false;
-		else if (autoOpen) open = true;
 	});
 	let busy = $state(false);
 	let error = $state('');
@@ -60,23 +58,42 @@
 </script>
 
 {#snippet unlockButton()}
-	<Dialog.Trigger
-		onclick={() => {
-			if (exists) run(signInAndUnlock);
-		}}
+	<div
+		class={screen
+			? 'mt-6 flex flex-col items-center gap-2'
+			: 'mb-6 flex flex-wrap items-center gap-3'}
 	>
-		{#snippet child({ props })}<Button
-				{...props}
+		{#if exists === false}
+			<Dialog.Trigger>
+				{#snippet child({ props })}<Button
+						{...props}
+						variant={screen ? 'default' : 'outline'}
+						disabled={busy}>Set up vault</Button
+					>{/snippet}
+			</Dialog.Trigger>
+		{:else}
+			<Button
 				variant={screen ? 'default' : 'outline'}
-				class={screen ? 'mt-6 h-9 gap-2 px-4' : 'mb-6'}
+				class={screen ? 'h-9 gap-2 px-4' : ''}
 				disabled={busy || exists === null}
-				>{#if screen}<RiKey2Line />{/if}{busy
-					? 'Unlocking…'
-					: exists === false
-						? 'Set up vault'
-						: 'Unlock vault'}</Button
-			>{/snippet}
-	</Dialog.Trigger>
+				onclick={() => run(signInAndUnlock)}
+			>
+				{#if screen}<RiKey2Line />{/if}{busy ? 'Unlocking…' : 'Unlock vault'}
+			</Button>
+			{#if exists}
+				<Dialog.Trigger>
+					{#snippet child({ props })}<Button
+							{...props}
+							variant="link"
+							size="sm"
+							class="text-muted-foreground"
+							disabled={busy}>Recovery options</Button
+						>{/snippet}
+				</Dialog.Trigger>
+			{/if}
+		{/if}
+		{#if error && !open}<p role="alert" class="max-w-sm text-xs text-destructive">{error}</p>{/if}
+	</div>
 {/snippet}
 
 <Dialog.Root

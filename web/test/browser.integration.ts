@@ -111,8 +111,9 @@ try {
 		await invitedPage.getByLabel('Your name', { exact: true }).fill('Invited teammate');
 		await invitedPage.getByRole('button', { name: 'Join workspace' }).click();
 		await expect(
-			invitedPage.getByRole('button', { name: 'Create passkey', exact: true })
+			invitedPage.getByRole('button', { name: 'Set up vault', exact: true })
 		).toBeVisible({ timeout: 15000 });
+		await expect(invitedPage.getByRole('dialog')).toHaveCount(0);
 		expect(new URL(invitedPage.url()).searchParams.get('workspace')).toBe(invitedOrg.id);
 		const [joined] = await sql`select name,email_verified from "user" where email=${inviteEmail}`;
 		expect(joined).toMatchObject({ name: 'Invited teammate', email_verified: true });
@@ -123,12 +124,11 @@ try {
 		await sql`delete from "user" where email=${inviteEmail}`;
 	}
 	await page.goto('http://localhost:5174/dashboard/env');
-	await expect(page.getByRole('dialog')).toBeVisible();
-	await expect(page.getByRole('dialog')).toHaveCSS('position', 'fixed');
-	await expect(page.getByRole('button', { name: 'Create passkey', exact: true })).toBeVisible();
-	await page.keyboard.press('Escape');
+	await expect(page.getByRole('button', { name: 'Set up vault', exact: true })).toBeEnabled();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Set up vault', exact: true }).click();
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCSS('position', 'fixed');
 	await page.getByRole('button', { name: 'Create passkey', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Save your recovery key' })).toBeVisible({
 		timeout: 15000
@@ -322,6 +322,11 @@ try {
 	await expect(page.getByRole('heading', { name: 'Devices with workspace access' })).toBeVisible();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	expect(requests.length).toBe(settingsVerificationCount);
+	await page.getByRole('link', { name: 'Vault', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Unlock vault', exact: true })).toBeEnabled();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+	await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
 	await page.getByRole('button', { name: 'Leave', exact: true }).click();
 	await page
 		.getByRole('alertdialog')
@@ -344,13 +349,17 @@ try {
 	await page.screenshot({ path: '/tmp/voe-sidebar-mobile.png', fullPage: true });
 	await page.getByRole('link', { name: 'Vault', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Close navigation' })).toHaveCount(0);
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await page.getByRole('button', { name: 'Show values' }).click();
 
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toHaveCount(0);
-	await page.keyboard.press('Escape');
+	await expect(page.getByRole('heading', { name: 'Vault locked', exact: true })).toBeVisible();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.reload();
+	await expect(page.getByRole('button', { name: 'Unlock vault', exact: true })).toBeEnabled();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	const verificationCount = requests.length;
 	await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
@@ -407,12 +416,15 @@ try {
 	await page.getByRole('link', { name: 'Vault', exact: true }).click();
 	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
-	await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
 	await folderTree.getByRole('button', { name: 'production', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Show values' })).toBeVisible({ timeout: 15000 });
 	await page.getByRole('button', { name: 'Show values' }).click();
 	await expect(page.getByText('browser-test-only', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Recovery options', exact: true }).click();
 	await page.getByText('Recover with an offline key', { exact: true }).click();
 	await page.getByLabel('Recovery key', { exact: true }).fill(recovery);
 	await page.getByRole('button', { name: 'Recover vault', exact: true }).click();
@@ -467,7 +479,9 @@ try {
 			}
 			expect(fingerprint).toHaveLength(64);
 			await page.goto(url!);
-			await page.getByRole('button', { name: 'Unlock with passkey', exact: true }).click();
+			await expect(page.getByRole('button', { name: 'Unlock vault', exact: true })).toBeEnabled();
+			await expect(page.getByRole('dialog')).toHaveCount(0);
+			await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
 			await page.getByLabel('Device fingerprint from your terminal').fill(fingerprint!);
 			await page.getByLabel('Browser workspace', { exact: true }).check();
 			await page.getByRole('button', { name: 'Authorize device', exact: true }).click();

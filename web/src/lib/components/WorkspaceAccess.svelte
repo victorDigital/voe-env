@@ -55,7 +55,7 @@
 	}
 </script>
 
-<VaultAccess {userId} autoOpen={requireUnlock} screen={requireUnlock} onready={() => refresh()} />
+<VaultAccess {userId} screen={requireUnlock} onready={() => refresh()} />
 {#if $isUnlocked || !requireUnlock}
 	{#if error}<p role="alert" class="mb-5 text-xs text-destructive">{error}</p>{/if}
 	{#if !dashboard.selected}

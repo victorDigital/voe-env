@@ -101,7 +101,7 @@
 		<h1 class="text-xl font-semibold tracking-tight">Account</h1>
 		<p class="mt-1.5 text-xs text-muted-foreground">{data.user.email}</p>
 	</div>
-	<VaultAccess userId={data.user.id} autoOpen={false} onready={() => run(load)} />
+	<VaultAccess userId={data.user.id} onready={() => run(load)} />
 	{#if error}<p role="alert" class="mb-5 text-xs text-destructive">{error}</p>{/if}
 	{#if notice}<p role="status" class="mb-5 text-xs text-muted-foreground">{notice}</p>{/if}
 	<section aria-labelledby="devices-heading" class="mb-10">
