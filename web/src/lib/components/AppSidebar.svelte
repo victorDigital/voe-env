@@ -153,22 +153,21 @@
 								>{/snippet}
 						</Sidebar.MenuButton></Sidebar.MenuItem
 					>{/each}
-				<Sidebar.MenuItem
-					><Sidebar.MenuButton
-						onclick={() => {
-							installOpen = true;
-							sidebar.setOpenMobile(false);
-						}}
-						tooltipContent="Install CLI"
-						class="h-9 text-xs text-muted-foreground"
-						><RiTerminalBoxLine /><span>Install CLI</span></Sidebar.MenuButton
-					></Sidebar.MenuItem
-				>
 			</Sidebar.Menu></Sidebar.Group
 		>
 	</Sidebar.Content>
 	<Sidebar.Footer class="gap-3 px-3 pb-3 group-data-[collapsible=icon]:px-2">
 		<Sidebar.Menu
+			><Sidebar.MenuItem
+				><Sidebar.MenuButton
+					onclick={() => {
+						installOpen = true;
+						sidebar.setOpenMobile(false);
+					}}
+					tooltipContent="Install CLI"
+					class="h-9 text-xs text-muted-foreground"
+					><RiTerminalBoxLine /><span>Install CLI</span></Sidebar.MenuButton
+				></Sidebar.MenuItem
 			><Sidebar.MenuItem
 				><Sidebar.MenuButton
 					tooltipContent="Documentation"
