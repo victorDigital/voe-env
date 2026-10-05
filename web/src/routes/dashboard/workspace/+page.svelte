@@ -321,7 +321,7 @@
 				</div>
 			</section>{/if}
 		{#if canManage}<section class="mb-10">
-				<h2 class="mb-4 text-sm font-medium">Workspace devices</h2>
+				<h2 class="mb-4 text-sm font-medium">Devices with workspace access</h2>
 				<div class="divide-y border-y">
 					{#each snapshot?.devices.filter( (d) => snapshot?.recipients.includes(`device:${d.id}`) ) || [] as device}<div
 							class="flex items-center gap-3 py-4"

@@ -106,7 +106,7 @@
 	{#if notice}<p role="status" class="mb-5 text-xs text-muted-foreground">{notice}</p>{/if}
 	<section aria-labelledby="devices-heading" class="mb-10">
 		<div class="mb-4">
-			<h2 id="devices-heading" class="text-sm font-medium">CLI devices</h2>
+			<h2 id="devices-heading" class="text-sm font-medium">Your devices</h2>
 			<p class="mt-1 text-xs text-muted-foreground">Devices approved to access your workspaces.</p>
 		</div>
 		<div class="divide-y border-y">

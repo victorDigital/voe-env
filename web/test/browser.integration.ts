@@ -190,7 +190,7 @@ try {
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.reload();
 	await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Workspace devices' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Devices with workspace access' })).toBeVisible();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	expect(requests.length).toBe(settingsVerificationCount);
 	await page.getByRole('button', { name: 'Leave', exact: true }).click();
