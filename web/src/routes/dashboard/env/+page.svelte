@@ -410,7 +410,7 @@
 			<div class="space-y-2">
 				<Label for="secret-value">Value</Label><Textarea
 					id="secret-value"
-					class="min-h-28 font-mono text-xs"
+					class="max-h-64 min-h-28 font-mono text-xs"
 					bind:value={secretValue}
 					autocomplete="off"
 					spellcheck={false}

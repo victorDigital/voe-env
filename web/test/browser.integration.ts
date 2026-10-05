@@ -112,7 +112,32 @@ try {
 	await page.getByLabel('Name', { exact: true }).fill(longName);
 	await page
 		.getByLabel('Value', { exact: true })
-		.fill('a-long-value-that-must-stay-inside-its-own-column');
+		.fill('demo_' + 'A'.repeat(4096) + '\n' + 'B'.repeat(4096));
+	const checkDialogBounds = async () => {
+		for (const width of [1440, 390]) {
+			await page.setViewportSize({ width, height: 844 });
+			await expect
+				.poll(() =>
+					page.getByRole('dialog').evaluate((dialog) => {
+						const bounds = dialog.getBoundingClientRect();
+						return (
+							bounds.left >= 0 &&
+							bounds.right <= innerWidth &&
+							bounds.top >= 0 &&
+							bounds.bottom <= innerHeight &&
+							dialog.scrollWidth <= dialog.clientWidth &&
+							[...dialog.querySelectorAll('input, textarea, button')].every((field) => {
+								const rect = field.getBoundingClientRect();
+								return rect.left >= bounds.left && rect.right <= bounds.right;
+							})
+						);
+					})
+				)
+				.toBe(true);
+		}
+		await page.setViewportSize({ width: 1440, height: 1000 });
+	};
+	await checkDialogBounds();
 	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	const longRow = page.getByRole('row').filter({ hasText: longName });
@@ -135,6 +160,7 @@ try {
 	await page.getByRole('button', { name: `Actions for ${longName}` }).click();
 	await page.getByRole('menuitem', { name: 'Edit secret' }).click();
 	await expect(page.getByLabel('Name', { exact: true })).toHaveAttribute('readonly');
+	await checkDialogBounds();
 	await page.getByLabel('Value', { exact: true }).fill('updated-value');
 	await page.getByRole('button', { name: 'Save secret', exact: true }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
