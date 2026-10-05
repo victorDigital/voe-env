@@ -76,12 +76,14 @@
 </script>
 
 <Sidebar.Root collapsible="icon" aria-label="Application sidebar">
-	<Sidebar.Header class="gap-5 px-3 pt-5 pb-3 group-data-[collapsible=icon]:px-2">
-		<div class="flex items-center justify-between">
+	<Sidebar.Header class="gap-3 px-3 pt-0 pb-3 group-data-[collapsible=icon]:px-2">
+		<div
+			class="flex h-14 shrink-0 items-center justify-between group-data-[collapsible=icon]:justify-center"
+		>
 			<a
 				href="/dashboard/env"
 				aria-label="VOE vault"
-				class="w-fit px-2 text-lg font-semibold tracking-tight group-data-[collapsible=icon]:px-1"
+				class="inline-flex h-9 w-fit shrink-0 items-center justify-center px-2 text-lg font-semibold tracking-tight group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:px-0"
 				><span class="group-data-[collapsible=icon]:hidden">voe</span><span
 					class="hidden group-data-[collapsible=icon]:inline">v</span
 				><span class="text-primary">.</span></a
