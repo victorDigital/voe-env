@@ -62,7 +62,7 @@ ve completions zsh > ~/.zfunc/_ve
 
 Global `--json` emits one JSON result on stdout; runtime errors are JSON on stderr and exit nonzero. `--quiet` suppresses normal human output, but errors remain visible. `--no-input` disables prompts. Auth approval instructions always go to stderr so manual browser approval can proceed. Shell completion scripts support Bash, Zsh, Fish, PowerShell, and Elvish; load the generated script through your shell's completion setup.
 
-Downloads show a compact progress bar in interactive terminals, capped at 10 redraws per second. When the server omits the download size, only the downloaded byte count is shown. Redirected output stays plain text.
+Push, pull, and other server operations show a compact animated activity bar in interactive terminals while waiting for a response. It clears before prompts, results, and errors. Update downloads use the same styling with byte counts and a percentage when the download size is known. Progress is capped at 10 redraws per second and hidden with `--json`, `--quiet`, or redirected output.
 
 `VOE_BASE_URL` overrides the saved installer URL in `~/.voe/server-url`; the default is `https://env.voe.dk`. Project commands, including `auth`, `logout`, `whoami`, and `workspaces`, use the nearest `.voe.json` server. Outside a project they use the configured default; `update` uses the configured default download server. HTTPS is required except on localhost.
 

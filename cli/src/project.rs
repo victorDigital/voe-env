@@ -80,7 +80,14 @@ pub(super) async fn load_context(
     credentials: &Credentials,
 ) -> Result<ProjectContext> {
     let workspaces: Vec<Workspace> = serde_json::from_value(
-        request(&project.server, credentials, "/api/workspaces", None).await?,
+        request(
+            options,
+            &project.server,
+            credentials,
+            "/api/workspaces",
+            None,
+        )
+        .await?,
     )?;
     let workspace = workspaces.iter().find(|workspace| workspace.id == project.organization_id)
         .ok_or("This workspace is no longer available. Run ve workspaces, then ve init to choose another.")?;

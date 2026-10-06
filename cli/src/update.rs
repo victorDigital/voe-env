@@ -53,23 +53,12 @@ pub(super) async fn cmd_update(options: &Options) -> Result<()> {
         redirects += 1;
     };
     let length = response.content_length();
-    let draw_target = if io::stdout().is_terminal()
-        && io::stderr().is_terminal()
-        && !options.json
-        && !options.quiet
-    {
-        ProgressDrawTarget::stderr_with_hz(10)
-    } else {
-        ProgressDrawTarget::hidden()
-    };
     let template = if length.is_some() {
         "Downloading [{bar:24}] {percent:>3}% {bytes}/{total_bytes}"
     } else {
         "Downloading {bytes}"
     };
-    let progress = ProgressBar::with_draw_target(length, draw_target)
-        .with_style(ProgressStyle::with_template(template)?.progress_chars("=>-"))
-        .with_finish(ProgressFinish::AndClear);
+    let progress = progress_bar(options, length, template)?;
     let mut binary = Vec::with_capacity(usize::try_from(length.unwrap_or(0))?);
     while let Some(chunk) = response.chunk().await? {
         binary.extend_from_slice(&chunk);

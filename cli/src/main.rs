@@ -1,8 +1,10 @@
 mod update;
 use update::cmd_update;
 mod args;
+mod progress;
 mod project;
 use args::*;
+use progress::{progress_bar, OperationProgress};
 use project::*;
 mod setup;
 mod sync;
@@ -142,11 +144,22 @@ fn client() -> Result<Client> {
         .build()?)
 }
 async fn request(
+    options: &Options,
     server: &str,
     credentials: &Credentials,
     path: &str,
     body: Option<Value>,
 ) -> Result<Value> {
+    let message = if body.is_some() {
+        "Pushing encrypted changes"
+    } else if path == "/api/workspaces" {
+        "Loading workspaces"
+    } else if path == "/api/test" {
+        "Checking authentication"
+    } else {
+        "Pulling workspace"
+    };
+    let _progress = OperationProgress::new(options, message)?;
     let request = client()?
         .request(
             if body.is_some() {
@@ -197,9 +210,14 @@ async fn request(
         format!("Invalid response from {server}. Check server availability and retry.").into()
     })
 }
-async fn snapshot(project: &Project, credentials: &Credentials) -> Result<Snapshot> {
+async fn snapshot(
+    options: &Options,
+    project: &Project,
+    credentials: &Credentials,
+) -> Result<Snapshot> {
     Ok(serde_json::from_value(
         request(
+            options,
             &project.server,
             credentials,
             &format!("/api/workspaces/{}", project.organization_id),
@@ -427,7 +445,8 @@ async fn run(options: &Options, command: Commands) -> Result<()> {
         Commands::Workspaces => {
             let server = active_server()?;
             let credentials = credentials(&server)?;
-            let workspaces = request(&server, &credentials, "/api/workspaces", None).await?;
+            let workspaces =
+                request(options, &server, &credentials, "/api/workspaces", None).await?;
             let lines = workspaces
                 .as_array()
                 .ok_or("Invalid workspace response")?
@@ -451,7 +470,7 @@ async fn run(options: &Options, command: Commands) -> Result<()> {
         Commands::Whoami | Commands::Test => {
             let server = active_server()?;
             let credentials = credentials(&server)?;
-            let value = request(&server, &credentials, "/api/test", None).await?;
+            let value = request(options, &server, &credentials, "/api/test", None).await?;
             let email = value["user"]["email"].as_str().unwrap_or("Authenticated");
             options.emit(
                 &json!({"server":server,"authenticated":true,"email":email}),

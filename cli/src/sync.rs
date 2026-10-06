@@ -215,7 +215,7 @@ pub(super) async fn push(options: &Options, force: bool, dry_run: bool) -> Resul
     }
     let values = local_values_at(&env_path)?;
     let credentials = credentials(&project.server)?;
-    let mut snapshot = snapshot(&project, &credentials).await?;
+    let mut snapshot = snapshot(options, &project, &credentials).await?;
     let project_context = load_context(&project, &snapshot, options, &credentials).await?;
     options.progress(&project_context.display());
     if snapshot.rotation_required {
@@ -257,6 +257,7 @@ pub(super) async fn push(options: &Options, force: bool, dry_run: bool) -> Resul
     apply_push(&mut snapshot, &project.folder_id, &key, &desired, &changes)?;
     let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
     request(
+        options,
         &project.server,
         &credentials,
         &format!("/api/workspaces/{}", project.organization_id),
@@ -285,7 +286,7 @@ pub(super) async fn pull(
 ) -> Result<()> {
     let project = project()?;
     let credentials = credentials(&project.server)?;
-    let snapshot = snapshot(&project, &credentials).await?;
+    let snapshot = snapshot(options, &project, &credentials).await?;
     let project_context = load_context(&project, &snapshot, options, &credentials).await?;
     options.progress(&project_context.display());
     let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;
@@ -369,7 +370,7 @@ pub(super) async fn pull(
 pub(super) async fn inspect(options: &Options, command: &Commands) -> Result<()> {
     let project = project()?;
     let credentials = credentials(&project.server)?;
-    let snapshot = snapshot(&project, &credentials).await?;
+    let snapshot = snapshot(options, &project, &credentials).await?;
     let context = load_context(&project, &snapshot, options, &credentials).await?;
     match command {
         Commands::Diff { all } => {
@@ -463,7 +464,7 @@ pub(super) async fn status(options: &Options) -> Result<()> {
             ));
         }
     };
-    let snapshot = snapshot(&project, &credentials).await?;
+    let snapshot = snapshot(options, &project, &credentials).await?;
     let context = load_context(&project, &snapshot, options, &credentials).await?;
     let local = local_values_at(&file)?;
     let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;

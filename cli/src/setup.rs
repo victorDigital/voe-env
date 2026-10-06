@@ -42,6 +42,7 @@ fn open_browser(url: &reqwest::Url) -> Result<()> {
 }
 
 async fn authenticate_for(options: &Options, server: &str) -> Result<()> {
+    let progress = OperationProgress::new(options, "Preparing device enrollment")?;
     let store = CredentialStore::new(server)?;
     let (public, private) = crypto::generate_identity()?;
     let code: DeviceCode = client()?
@@ -66,11 +67,13 @@ async fn authenticate_for(options: &Options, server: &str) -> Result<()> {
         .to_string();
     let fingerprint = crypto::fingerprint(&public)?;
     let url = approval_url(server, &code.user_code, &fingerprint)?;
+    drop(progress);
     eprintln!("Open {url}\nCode: {}\nDevice fingerprint: {fingerprint}\nConfirm the fingerprint in your browser and select workspace access.", code.user_code);
     if options.interactive() && !options.no_browser && open_browser(&url).is_err() {
         eprintln!("Could not open your browser. Open the URL above to continue.");
     }
     let deadline = Instant::now() + Duration::from_secs(code.expires_in);
+    let _progress = OperationProgress::new(options, "Waiting for browser approval")?;
     let mut interval = code.interval.max(1);
     while Instant::now() < deadline {
         tokio::time::sleep(Duration::from_secs(interval)).await;
@@ -402,8 +405,9 @@ pub(super) async fn init(
         }
         None => return Err("Authentication required. Run ve auth, then run ve init again.".into()),
     };
-    let workspaces: Vec<Workspace> =
-        serde_json::from_value(request(&server, &credentials, "/api/workspaces", None).await?)?;
+    let workspaces: Vec<Workspace> = serde_json::from_value(
+        request(options, &server, &credentials, "/api/workspaces", None).await?,
+    )?;
     let choices = workspace_choices(&workspaces, org.as_deref())?;
     if choices.len() > 1 && !options.interactive() {
         return Err("Multiple workspaces match. Pass --org with a unique workspace name or ID. Run ve workspaces to list them.".into());
@@ -415,7 +419,7 @@ pub(super) async fn init(
         folder_id: String::new(),
         root,
     };
-    let mut snapshot = snapshot(&project, &credentials).await?;
+    let mut snapshot = snapshot(options, &project, &credentials).await?;
     let selection = if folder_path.is_none() && options.interactive() {
         choose_folder(&snapshot, &mut io::stdin().lock(), &mut io::stderr().lock())?
     } else {
@@ -442,6 +446,7 @@ pub(super) async fn init(
     if snapshot.folders.len() != original_folder_count {
         let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
         request(
+            options,
             &project.server,
             &credentials,
             &format!("/api/workspaces/{}", project.organization_id),
