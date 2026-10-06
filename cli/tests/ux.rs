@@ -51,7 +51,12 @@ fn validate_from_subdirectory_uses_project_relative_file_and_json_output() {
 
     let output = run(&child, &["validate", "--file", ".env.local", "--json"]);
     let value = json_success(&output);
-    assert_eq!(value["file"], root.join(".env.local").to_str().unwrap());
+    assert_eq!(
+        Path::new(value["file"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        root.join(".env.local").canonicalize().unwrap()
+    );
     assert_eq!(value["variables"], 2);
     assert_eq!(value["valid"], true);
     assert_value_hidden(&output, "private-value-123");
