@@ -1,3 +1,13 @@
+mod update;
+use update::cmd_update;
+mod args;
+mod project;
+use args::*;
+use project::*;
+mod setup;
+mod sync;
+use setup::*;
+use sync::*;
 mod credential_store;
 mod crypto;
 use clap::{Parser, Subcommand};
@@ -18,66 +28,14 @@ use std::{
 use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[derive(Parser)]
-#[command(
-    name = "ve",
-    about = "Passwordless encrypted environment workspaces",
-    version
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-#[derive(Subcommand)]
-enum Commands {
-    #[command(about = "Enroll this CLI using your browser and passkey")]
-    Auth,
-    #[command(about = "Remove this CLI's locally stored credentials")]
-    Logout,
-    #[command(about = "Update ve to the latest release")]
-    Update,
-    #[command(about = "List organizations you belong to")]
-    Workspaces,
-    #[command(about = "Select an organization and choose or create a folder for this project")]
-    Init {
-        #[arg(long, help = "Workspace name or ID; omit to choose a workspace")]
-        org: Option<String>,
-        #[arg(
-            short,
-            long,
-            help = "Existing folder path; use / for root; omit to choose interactively"
-        )]
-        path: Option<String>,
-    },
-    #[command(about = "Encrypt and push .env; --force also deletes missing remote keys")]
-    Push {
-        #[arg(long)]
-        force: bool,
-    },
-    #[command(about = "Decrypt into .env; --force replaces local values")]
-    Pull {
-        #[arg(long)]
-        force: bool,
-    },
-    #[command(about = "Show folders and secret names in a tree")]
-    List,
-    #[command(about = "Compare local and remote values without printing them")]
-    Diff,
-    #[command(about = "Search secret names in the selected organization")]
-    Search { pattern: String },
-    #[command(about = "Validate local .env syntax")]
-    Validate,
-    #[command(about = "Show the current authenticated account")]
-    Whoami,
-    #[command(about = "Test authenticated access")]
-    Test,
-}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Project {
     server: String,
     organization_id: String,
     folder_id: String,
+    #[serde(skip)]
+    root: PathBuf,
 }
 #[derive(Deserialize)]
 struct Workspace {
@@ -171,22 +129,6 @@ fn validate_server(value: &str) -> Result<String> {
     }
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
-fn project() -> Result<Project> {
-    let mut p: Project = serde_json::from_str(
-        &fs::read_to_string(".voe.json")
-            .map_err(|_| "Run ve init first to select a workspace for this project")?,
-    )?;
-    p.server = validate_server(&p.server)?;
-    Ok(p)
-}
-fn credentials(server: &str) -> Result<Credentials> {
-    let stored = CredentialStore::new(server)?.load()?;
-    let credentials: Credentials = serde_json::from_str(&stored)?;
-    if credentials.expires_at <= now() {
-        return Err("CLI session expired. Run ve auth again".into());
-    }
-    Ok(credentials)
-}
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -220,85 +162,40 @@ async fn request(
     } else {
         request
     };
-    let response = request.send().await?;
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            format!("Request to {server} timed out. Check your connection and retry.")
+        } else {
+            format!("Could not reach {server}. Check your connection and the server in .voe.json.")
+        }
+    })?;
     let status = response.status();
-    let value: Value = response.json().await?;
+    let value = response.json::<Value>().await;
     if !status.is_success() {
+        let hint = match status.as_u16() {
+            401 => " Run ve auth to sign in again.",
+            403 => " Check your workspace access in the web app.",
+            409 => " Run ve diff and review remote changes before retrying; complete any required key rotation in the web app.",
+            429 => " Wait a moment before retrying.",
+            500..=599 => " Check server availability and retry.",
+            _ => "",
+        };
         return Err(format!(
-            "{}: {}",
+            "{}: {}{}",
             status,
             value
-                .get("message")
-                .or_else(|| value.get("error"))
+                .as_ref()
+                .ok()
+                .and_then(|value| value.get("message").or_else(|| value.get("error")))
                 .and_then(Value::as_str)
-                .unwrap_or("Request failed")
+                .unwrap_or("Request failed"),
+            hint
         )
         .into());
     }
-    Ok(value)
-}
-async fn authenticate() -> Result<()> {
-    let server = validate_server(&get_base_url())?;
-    let store = CredentialStore::new(&server)?;
-    let (public, private) = crypto::generate_identity()?;
-    let code: DeviceCode = client()?
-        .post(format!("{server}/api/auth/device/code"))
-        .json(&json!({"client_id":"voe-cli"}))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let enrolled: Value = client()?
-        .post(format!("{server}/api/devices"))
-        .json(&json!({"action":"enroll","deviceCode":code.device_code,"publicKey":public}))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let device_id = enrolled["id"]
-        .as_str()
-        .ok_or("Missing enrollment ID")?
-        .to_string();
-    println!("Open {server}/device?user_code={}\nCode: {}\nDevice fingerprint: {}\nVerify this fingerprint in your browser and select workspace access.",code.user_code,code.user_code,crypto::fingerprint(&public)?);
-    let deadline = Instant::now() + Duration::from_secs(code.expires_in);
-    let mut interval = code.interval.max(1);
-    while Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
-        let response=client()?.post(format!("{server}/api/auth/device/token")).json(&json!({"grant_type":"urn:ietf:params:oauth:grant-type:device_code","device_code":code.device_code,"client_id":"voe-cli"})).send().await?;
-        let success = response.status().is_success();
-        let value: Value = response.json().await?;
-        if success {
-            let credentials = Credentials {
-                access_token: value["access_token"]
-                    .as_str()
-                    .ok_or("Missing session token")?
-                    .into(),
-                private_key: private.to_string(),
-                device_id,
-                expires_at: now()
-                    + value["expires_in"]
-                        .as_u64()
-                        .ok_or("Missing session expiry")?,
-            };
-            let serialized = Zeroizing::new(serde_json::to_string(&credentials)?);
-            store.save(&serialized)?;
-            println!("Device enrolled. Credentials are stored in your OS credential store.");
-            return Ok(());
-        }
-        match value["error"].as_str() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval += 5,
-            _ => {
-                return Err(value["error_description"]
-                    .as_str()
-                    .unwrap_or("Device authorization failed")
-                    .into())
-            }
-        }
-    }
-    Err("Device authorization expired. Run ve auth again".into())
+    value.map_err(|_| {
+        format!("Invalid response from {server}. Check server availability and retry.").into()
+    })
 }
 async fn snapshot(project: &Project, credentials: &Credentials) -> Result<Snapshot> {
     Ok(serde_json::from_value(
@@ -320,10 +217,9 @@ fn path(folders: &[Folder], id: &str) -> Result<String> {
         if count > 64 {
             return Err("Invalid folder tree".into());
         }
-        let folder = folders
-            .iter()
-            .find(|f| f.id == id)
-            .ok_or("Folder not found")?;
+        let folder = folders.iter().find(|f| f.id == id).ok_or(
+            "Folder not found. Run ve init from the project root to choose an existing folder.",
+        )?;
         if folder.parent_id.is_some() {
             parts.push(folder.name.clone());
         }
@@ -399,14 +295,15 @@ fn remote_values(
         })
         .collect()
 }
-fn local_values() -> Result<BTreeMap<String, String>> {
-    if !Path::new(".env").exists() {
+fn local_values_at(file: &Path) -> Result<BTreeMap<String, String>> {
+    if !file.try_exists()? {
         return Ok(BTreeMap::new());
     }
     let mut values = BTreeMap::new();
-    for entry in dotenvy::from_path_iter(".env")? {
-        let (key, value) = entry?;
-        if !regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")?.is_match(&key) {
+    let key_pattern = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")?;
+    for entry in dotenvy::from_path_iter(file)? {
+        let (key, value) = entry.map_err(|_| format!("Invalid environment syntax in {}. Check quoting and KEY=value entries, then run ve validate.", file.display()))?;
+        if !key_pattern.is_match(&key) {
             return Err(format!("Invalid key: {key}").into());
         }
         if values.insert(key.clone(), value).is_some() {
@@ -427,348 +324,11 @@ fn env_content(values: &BTreeMap<String, String>) -> String {
     }
     content
 }
-fn write_env(values: &BTreeMap<String, String>) -> Result<()> {
-    let mut file = tempfile::NamedTempFile::new_in(".")?;
+fn write_env_at(destination: &Path, values: &BTreeMap<String, String>) -> Result<()> {
+    let mut file = tempfile::NamedTempFile::new_in(destination.parent().unwrap_or(Path::new(".")))?;
     file.write_all(env_content(values).as_bytes())?;
     file.as_file().sync_all()?;
-    file.persist(".env")?;
-    Ok(())
-}
-fn workspace_choices<'a>(
-    workspaces: &'a [Workspace],
-    selector: Option<&str>,
-) -> Result<Vec<&'a Workspace>> {
-    if workspaces.is_empty() {
-        return Err("No workspaces found. Create or join a workspace in the web app first.".into());
-    }
-    let mut choices: Vec<_> = if let Some(selector) = selector {
-        let selector = selector.trim();
-        if let Some(workspace) = workspaces.iter().find(|workspace| workspace.id == selector) {
-            return Ok(vec![workspace]);
-        }
-        let matches: Vec<_> = workspaces
-            .iter()
-            .filter(|workspace| workspace.name.to_lowercase() == selector.to_lowercase())
-            .collect();
-        if matches.is_empty() {
-            return Err(format!(
-                "Workspace {selector:?} not found. Run ve workspaces to see your available workspaces."
-            )
-            .into());
-        }
-        matches
-    } else {
-        workspaces.iter().collect()
-    };
-    choices.sort_by_key(|workspace| (workspace.name.to_lowercase(), &workspace.id));
-    Ok(choices)
-}
-fn choose_workspace<'a>(choices: &[&'a Workspace]) -> Result<&'a Workspace> {
-    if let [workspace] = choices {
-        return Ok(workspace);
-    }
-    if !io::stdin().is_terminal() {
-        return Err("Multiple workspaces match. Pass --org with a unique workspace name or ID, or run ve init in a terminal to choose.".into());
-    }
-    println!("Choose a workspace:");
-    for (index, workspace) in choices.iter().enumerate() {
-        println!(
-            "  {}. {} ({}) [{}]",
-            index + 1,
-            workspace.name,
-            workspace.role,
-            workspace.id
-        );
-    }
-    print!("Workspace number: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let selected = input
-        .trim()
-        .parse::<usize>()
-        .ok()
-        .and_then(|number| number.checked_sub(1))
-        .and_then(|index| choices.get(index));
-    selected.copied().ok_or_else(|| {
-        "Invalid workspace selection. Run ve init again and choose a listed number.".into()
-    })
-}
-enum FolderSelection {
-    Existing(String),
-    Create(String),
-}
-fn prompt(input: &mut impl BufRead, output: &mut impl Write, label: &str) -> Result<String> {
-    write!(output, "{label}")?;
-    output.flush()?;
-    let mut value = String::new();
-    if input.read_line(&mut value)? == 0 {
-        return Err("Input closed. Project configuration was not changed.".into());
-    }
-    Ok(value.trim().to_string())
-}
-fn choose_folder(
-    snapshot: &Snapshot,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
-) -> Result<FolderSelection> {
-    let mut choices = snapshot
-        .folders
-        .iter()
-        .map(|folder| Ok((path(&snapshot.folders, &folder.id)?, &folder.id)))
-        .collect::<Result<Vec<_>>>()?;
-    choices.sort();
-    if choices.is_empty() {
-        return Err("Workspace root folder not found. Initialize it in the web app first.".into());
-    }
-    let can_create = snapshot.role != "viewer" && !snapshot.rotation_required;
-    writeln!(output, "Choose a folder:")?;
-    for (index, (folder_path, _)) in choices.iter().enumerate() {
-        let label = if folder_path.is_empty() {
-            "/ (root)"
-        } else {
-            folder_path
-        };
-        writeln!(output, "  {}. {label}", index + 1)?;
-    }
-    if can_create {
-        writeln!(output, "  n. Create a new folder")?;
-    } else if snapshot.rotation_required {
-        writeln!(
-            output,
-            "Folder creation requires key rotation in workspace settings."
-        )?;
-    }
-    loop {
-        let selected = prompt(input, output, "Folder number: ")?;
-        if can_create && selected.eq_ignore_ascii_case("n") {
-            loop {
-                let folder_path =
-                    prompt(input, output, "New folder path (e.g. product:production): ")?;
-                match validate_folder_path(&folder_path) {
-                    Ok(()) => return Ok(FolderSelection::Create(folder_path)),
-                    Err(error) => writeln!(output, "{error}")?,
-                }
-            }
-        }
-        if let Some((_, id)) = selected
-            .parse::<usize>()
-            .ok()
-            .and_then(|number| number.checked_sub(1))
-            .and_then(|index| choices.get(index))
-        {
-            return Ok(FolderSelection::Existing((*id).clone()));
-        }
-        writeln!(output, "Invalid folder selection. Choose a listed option.")?;
-    }
-}
-fn validate_folder_path(folder_path: &str) -> Result<()> {
-    let parts: Vec<_> = folder_path.split(':').collect();
-    if parts.len() > 63 {
-        return Err("Folder nesting is too deep (maximum 63 levels).".into());
-    }
-    if parts.iter().any(|name| {
-        name.trim().is_empty()
-            || *name == "/"
-            || name.encode_utf16().count() > 128
-            || name.chars().any(|ch| ch <= '\u{1f}')
-    }) {
-        return Err("Use nonempty folder names of at most 128 characters, separated by colons, without control characters.".into());
-    }
-    Ok(())
-}
-fn create_folder_path(
-    snapshot: &mut Snapshot,
-    org_key: &[u8],
-    folder_path: &str,
-) -> Result<String> {
-    if snapshot.rotation_required {
-        return Err("Workspace key rotation is required. Open workspace settings.".into());
-    }
-    if snapshot.role == "viewer" {
-        return Err("Viewers cannot create folders".into());
-    }
-    validate_folder_path(folder_path)?;
-    let mut folders = snapshot.folders.clone();
-    let mut parent = folders
-        .iter()
-        .find(|folder| folder.parent_id.is_none())
-        .ok_or("Workspace root folder not found. Initialize it in the web app first.")?
-        .id
-        .clone();
-    for name in folder_path.split(':') {
-        if let Some(folder) = folders.iter().find(|folder| {
-            folder.parent_id.as_deref() == Some(parent.as_str()) && folder.name == name
-        }) {
-            parent = folder.id.clone();
-            continue;
-        }
-        if folders.len() >= 2000 {
-            return Err("Workspace folder limit reached (2000).".into());
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let mut key = Zeroizing::new(vec![0u8; 32]);
-        rand::rngs::OsRng.try_fill_bytes(&mut key)?;
-        let wrapped_key = seal(
-            org_key,
-            &key,
-            &context(json!([
-                "folder",
-                snapshot.organization_id,
-                id,
-                snapshot.epoch
-            ])),
-        )?;
-        folders.push(Folder {
-            id: id.clone(),
-            parent_id: Some(parent),
-            name: name.to_string(),
-            wrapped_key,
-        });
-        parent = id;
-    }
-    snapshot.folders = folders;
-    Ok(parent)
-}
-async fn init(org: Option<String>, folder_path: Option<String>) -> Result<()> {
-    let server = validate_server(&get_base_url())?;
-    let credentials = credentials(&server)?;
-    let workspaces: Vec<Workspace> =
-        serde_json::from_value(request(&server, &credentials, "/api/workspaces", None).await?)?;
-    let choices = workspace_choices(&workspaces, org.as_deref())?;
-    let workspace = choose_workspace(&choices)?;
-    let mut project = Project {
-        server,
-        organization_id: workspace.id.clone(),
-        folder_id: String::new(),
-    };
-    let mut snapshot = snapshot(&project, &credentials).await?;
-    let selection = if folder_path.is_none() && io::stdin().is_terminal() {
-        choose_folder(&snapshot, &mut io::stdin().lock(), &mut io::stdout().lock())?
-    } else {
-        let folder_path = folder_path.as_deref().unwrap_or("");
-        let folder_path = if folder_path == "/" { "" } else { folder_path };
-        let folder = snapshot
-            .folders
-            .iter()
-            .find(|folder| path(&snapshot.folders, &folder.id).ok().as_deref() == Some(folder_path))
-            .ok_or("Folder not found. Run ve init without --path in a terminal to create it.")?;
-        FolderSelection::Existing(folder.id.clone())
-    };
-    let original_folder_count = snapshot.folders.len();
-    project.folder_id = match selection {
-        FolderSelection::Existing(id) => id,
-        FolderSelection::Create(folder_path) => {
-            let org_key = organization_key(&snapshot, &credentials)?;
-            create_folder_path(&mut snapshot, &org_key, &folder_path)?
-        }
-    };
-    folder_key(&snapshot, &credentials, &project.folder_id)?;
-    if snapshot.folders.len() != original_folder_count {
-        let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
-        request(
-            &project.server,
-            &credentials,
-            &format!("/api/workspaces/{}", project.organization_id),
-            Some(body),
-        )
-        .await?;
-    }
-    let selected_path = path(&snapshot.folders, &project.folder_id)?;
-    let mut file = tempfile::NamedTempFile::new_in(".")?;
-    file.write_all(serde_json::to_string_pretty(&project)?.as_bytes())?;
-    file.persist(".voe.json")?;
-    let selected_path = if selected_path.is_empty() {
-        "/"
-    } else {
-        &selected_path
-    };
-    println!("Project configured: {} ({selected_path})", workspace.name);
-    Ok(())
-}
-async fn push(force: bool) -> Result<()> {
-    let project = project()?;
-    let credentials = credentials(&project.server)?;
-    let mut snapshot = snapshot(&project, &credentials).await?;
-    if snapshot.rotation_required {
-        return Err("Workspace key rotation is required. Open workspace settings.".into());
-    }
-    if snapshot.role == "viewer" {
-        return Err("Viewers cannot write secrets".into());
-    }
-    if !Path::new(".env").exists() {
-        return Err("No .env file to push".into());
-    }
-    let values = local_values()?;
-    let key = folder_key(&snapshot, &credentials, &project.folder_id)?;
-    if force {
-        snapshot
-            .secrets
-            .retain(|s| s.folder_id != project.folder_id || values.contains_key(&s.name));
-    }
-    for (name, value) in &values {
-        let id = snapshot
-            .secrets
-            .iter()
-            .find(|s| s.folder_id == project.folder_id && s.name == *name)
-            .map(|s| s.id.clone())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let encrypted_value = seal(
-            &key,
-            value.as_bytes(),
-            &context(json!([
-                "secret",
-                snapshot.organization_id,
-                project.folder_id,
-                id,
-                name,
-                snapshot.epoch
-            ])),
-        )?;
-        snapshot.secrets.retain(|s| s.id != id);
-        snapshot.secrets.push(Secret {
-            id,
-            folder_id: project.folder_id.clone(),
-            name: name.clone(),
-            encrypted_value,
-        });
-    }
-    let body = json!({"action":"save","revision":snapshot.revision,"epoch":snapshot.epoch,"folders":snapshot.folders,"secrets":snapshot.secrets});
-    request(
-        &project.server,
-        &credentials,
-        &format!("/api/workspaces/{}", project.organization_id),
-        Some(body),
-    )
-    .await?;
-    println!("Pushed {} encrypted secrets.", values.len());
-    Ok(())
-}
-async fn pull(force: bool) -> Result<()> {
-    let project = project()?;
-    let credentials = credentials(&project.server)?;
-    let snapshot = snapshot(&project, &credentials).await?;
-    let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;
-    let mut values = local_values()?;
-    if !force
-        && remote
-            .iter()
-            .any(|(k, v)| values.get(k).is_some_and(|old| old != v))
-    {
-        return Err(
-            "Local values differ. Use ve diff, then ve pull --force to replace .env.".into(),
-        );
-    }
-    if force {
-        values = remote;
-    } else {
-        values.extend(remote);
-    }
-    write_env(&values)?;
-    println!(
-        "Wrote {} secrets to .env (without a vault password).",
-        values.len()
-    );
+    file.persist(destination)?;
     Ok(())
 }
 fn workspace_tree(folders: &[Folder], secrets: &[Secret]) -> Result<String> {
@@ -829,91 +389,101 @@ fn workspace_tree(folders: &[Folder], secrets: &[Secret]) -> Result<String> {
     }
     Ok(output)
 }
-async fn inspect(command: &Commands) -> Result<()> {
-    let project = project()?;
-    let credentials = credentials(&project.server)?;
-    let snapshot = snapshot(&project, &credentials).await?;
-    match command {
-        Commands::Diff => {
-            let local = local_values()?;
-            let remote = remote_values(&snapshot, &credentials, &project.folder_id)?;
-            for key in local
-                .keys()
-                .chain(remote.keys())
-                .collect::<std::collections::BTreeSet<_>>()
-            {
-                let status = match (local.get(key), remote.get(key)) {
-                    (Some(a), Some(b)) if a == b => "same",
-                    (Some(_), Some(_)) => "changed",
-                    (Some(_), None) => "local only",
-                    _ => "remote only",
-                };
-                println!("{status}: {key}");
-            }
-        }
-        Commands::List => {
-            print!("{}", workspace_tree(&snapshot.folders, &snapshot.secrets)?);
-        }
-        Commands::Search { pattern } => {
-            for secret in snapshot
-                .secrets
-                .iter()
-                .filter(|s| s.name.to_lowercase().contains(&pattern.to_lowercase()))
-            {
-                println!(
-                    "{}:{}",
-                    path(&snapshot.folders, &secret.folder_id)?,
-                    secret.name
-                );
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
-    match cli.command {
-        Commands::Auth => authenticate().await,
-        Commands::Logout => {
-            CredentialStore::new(&validate_server(&get_base_url())?)?.delete()?;
-            println!("Local credentials removed. Revoke the device in workspace settings to remove server access.");
-            Ok(())
+    if let Err(error) = run(&cli.options, cli.command).await {
+        if let Some(error) = error.downcast_ref::<io::Error>() {
+            if error.kind() == io::ErrorKind::BrokenPipe {
+                return;
+            }
         }
-        Commands::Update => cmd_update().await,
-        Commands::Init { org, path } => init(org, path).await,
-        Commands::Push { force } => push(force).await,
-        Commands::Pull { force } => pull(force).await,
+        if cli.options.json {
+            eprintln!("{}", json!({"error": error.to_string()}));
+        } else {
+            eprintln!("Error: {error}");
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run(options: &Options, command: Commands) -> Result<()> {
+    match command {
+        Commands::Auth => authenticate(options).await,
+        Commands::Logout => {
+            let server = active_server()?;
+            CredentialStore::new(&server)?.delete()?;
+            options.emit(&json!({"loggedOut":true,"server":server}), "Local credentials removed. Revoke the device in account settings to remove server access.")
+        }
+        Commands::Update => cmd_update(options).await,
+        Commands::Init { org, path } => init(options, org, path).await,
+        Commands::Status => status(options).await,
+        Commands::Push { force, dry_run } => push(options, force, dry_run).await,
+        Commands::Pull {
+            force,
+            dry_run,
+            conflicts,
+        } => pull(options, force, dry_run, conflicts).await,
         Commands::Workspaces => {
-            let server = validate_server(&get_base_url())?;
+            let server = active_server()?;
             let credentials = credentials(&server)?;
             let workspaces = request(&server, &credentials, "/api/workspaces", None).await?;
-            for org in workspaces.as_array().ok_or("Invalid workspace response")? {
-                println!(
-                    "{}  {}  ({})",
-                    org["id"].as_str().unwrap_or(""),
-                    org["name"].as_str().unwrap_or(""),
-                    org["role"].as_str().unwrap_or("")
-                );
-            }
-            Ok(())
+            let lines = workspaces
+                .as_array()
+                .ok_or("Invalid workspace response")?
+                .iter()
+                .map(|org| {
+                    format!(
+                        "{}  {}  ({})",
+                        org["name"].as_str().unwrap_or(""),
+                        org["id"].as_str().unwrap_or(""),
+                        org["role"].as_str().unwrap_or("")
+                    )
+                })
+                .collect::<Vec<_>>();
+            let human = if lines.is_empty() {
+                "No workspaces found. Create or join a workspace in the web app.".into()
+            } else {
+                lines.join("\n")
+            };
+            options.emit(&json!({"server":server,"workspaces":workspaces}), &human)
         }
         Commands::Whoami | Commands::Test => {
-            let server = validate_server(&get_base_url())?;
+            let server = active_server()?;
             let credentials = credentials(&server)?;
             let value = request(&server, &credentials, "/api/test", None).await?;
-            println!(
-                "{}",
-                value["user"]["email"].as_str().unwrap_or("Authenticated")
-            );
-            Ok(())
+            let email = value["user"]["email"].as_str().unwrap_or("Authenticated");
+            options.emit(
+                &json!({"server":server,"authenticated":true,"email":email}),
+                email,
+            )
         }
         Commands::Validate => {
-            println!("{} valid environment variables.", local_values()?.len());
-            Ok(())
+            let root = find_project()?
+                .map(|project| project.root)
+                .unwrap_or(env::current_dir()?);
+            let file = root.join(&options.file);
+            if !file.try_exists()? {
+                return Err(format!(
+                    "No environment file at {}. Run ve pull or select a file with --file.",
+                    file.display()
+                )
+                .into());
+            }
+            let count = local_values_at(&file)?.len();
+            options.emit(
+                &json!({"file":file,"valid":true,"variables":count}),
+                &format!("{}: {count} valid environment variables.", file.display()),
+            )
         }
-        command => inspect(&command).await,
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut buffer = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "ve", &mut buffer);
+            let script = String::from_utf8(buffer)?;
+            options.emit(&json!({"shell":shell.to_string(),"script":script}), &script)
+        }
+        command => inspect(options, &command).await,
     }
 }
 
@@ -1157,101 +727,4 @@ mod tests {
             dotenvy::from_read_iter(encoded.as_bytes()).collect();
         assert_eq!(parsed.unwrap(), values);
     }
-}
-async fn cmd_update() -> Result<()> {
-    let (asset, header): (&str, &[u8]) = match (env::consts::OS, env::consts::ARCH) {
-        ("macos", "x86_64") => ("ve-darwin-amd64", b"\xcf\xfa\xed\xfe"),
-        ("macos", "aarch64") => ("ve-darwin-arm64", b"\xcf\xfa\xed\xfe"),
-        ("linux", "x86_64") => ("ve-linux-amd64", b"\x7fELF"),
-        ("linux", "aarch64") => ("ve-linux-arm64", b"\x7fELF"),
-        ("windows", "x86_64") => ("ve-windows-amd64.exe", b"MZ"),
-        ("windows", "aarch64") => ("ve-windows-arm64.exe", b"MZ"),
-        _ => return Err("Updates are not supported on this platform".into()),
-    };
-
-    println!("Checking for updates...");
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
-    let mut latest_version = None;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    let mut url = reqwest::Url::parse(&format!("{}/downloads/{}", get_base_url(), asset))?;
-    let mut redirects = 0;
-    let mut response = loop {
-        if let Some(version) = release_version(&url) {
-            match version.cmp_precedence(&current_version) {
-                std::cmp::Ordering::Equal => {
-                    println!("ve {current_version} is already up to date.");
-                    return Ok(());
-                }
-                std::cmp::Ordering::Less => {
-                    println!("ve {current_version} is newer than the latest release ({version}). Keeping the installed version.");
-                    return Ok(());
-                }
-                std::cmp::Ordering::Greater => latest_version = Some(version),
-            }
-        }
-        let response = client.get(url.clone()).send().await?.error_for_status()?;
-        if !response.status().is_redirection() {
-            break response;
-        }
-        if redirects >= 10 {
-            return Err("Too many redirects while checking for updates".into());
-        }
-        let location = response
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .ok_or("Update redirect is missing its location")?
-            .to_str()?;
-        url = url.join(location)?;
-        redirects += 1;
-    };
-    let length = response.content_length();
-    let draw_target = if io::stdout().is_terminal() {
-        ProgressDrawTarget::stderr_with_hz(10)
-    } else {
-        ProgressDrawTarget::hidden()
-    };
-    let template = if length.is_some() {
-        "Downloading [{bar:24}] {percent:>3}% {bytes}/{total_bytes}"
-    } else {
-        "Downloading {bytes}"
-    };
-    let progress = ProgressBar::with_draw_target(length, draw_target)
-        .with_style(ProgressStyle::with_template(template)?.progress_chars("=>-"))
-        .with_finish(ProgressFinish::AndClear);
-    let mut binary = Vec::with_capacity(usize::try_from(length.unwrap_or(0))?);
-    while let Some(chunk) = response.chunk().await? {
-        binary.extend_from_slice(&chunk);
-        progress.inc(chunk.len() as u64);
-    }
-    progress.finish_and_clear();
-
-    if !binary.starts_with(header) {
-        return Err("The download is not a valid executable for this platform".into());
-    }
-    if latest_version.is_none() && binary == fs::read(env::current_exe()?)? {
-        println!("ve {current_version} is already up to date.");
-        return Ok(());
-    }
-
-    let mut download = tempfile::NamedTempFile::new()?;
-    download.write_all(&binary)?;
-    download.flush()?;
-    self_replace::self_replace(download.path())?;
-    if let Some(version) = latest_version {
-        println!("Updated ve from {current_version} to {version}.");
-    } else {
-        println!("Updated ve.");
-    }
-    Ok(())
-}
-
-fn release_version(url: &reqwest::Url) -> Option<semver::Version> {
-    let segments: Vec<_> = url.path_segments()?.collect();
-    let release = segments
-        .windows(3)
-        .find(|parts| parts[0] == "releases" && parts[1] == "download")?;
-    semver::Version::parse(release[2].strip_prefix("cli-v")?).ok()
 }

@@ -12,13 +12,19 @@ impl CredentialStore {
         })
     }
 
+    #[cfg(test)]
     pub fn load(&self) -> Result<Zeroizing<String>> {
+        self.load_optional()?.ok_or_else(|| "No credential-store entry. Run ve auth for this server. No plaintext fallback is used.".into())
+    }
+
+    pub fn load_optional(&self) -> Result<Option<Zeroizing<String>>> {
         match self.entry.get_password() {
-            Ok(value) => Ok(Zeroizing::new(value)),
-            Err(keyring::Error::NoEntry) => {
-                Err("No credential-store entry. Run ve auth for this server. No plaintext fallback is used.".into())
-            }
-            Err(error) => Err(format!("Could not read credentials from the OS credential store: {error}").into()),
+            Ok(value) => Ok(Some(Zeroizing::new(value))),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(format!(
+                "Could not read credentials from the OS credential store: {error}"
+            )
+            .into()),
         }
     }
 

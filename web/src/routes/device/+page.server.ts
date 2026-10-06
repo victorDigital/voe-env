@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { isAPIError } from 'better-auth/api';
 import { auth } from '#lib/server/auth.ts';
+import { readDeviceFingerprint } from '#lib/device-approval.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, request, url }) => {
@@ -33,5 +34,10 @@ export const load: PageServerLoad = async ({ locals, request, url }) => {
 		}
 	}
 
-	return { user: locals.user, userCode, verificationError };
+	return {
+		user: locals.user,
+		userCode,
+		verificationError,
+		...readDeviceFingerprint(url.searchParams)
+	};
 };

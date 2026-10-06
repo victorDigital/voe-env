@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { authClient } from '#lib/auth-client.ts';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
 	import VaultAccess from '#lib/components/VaultAccess.svelte';
 	import { api, isUnlocked, organizationKey, type Snapshot } from '#lib/vault-client.ts';
-	import { fingerprint, wrapTo, seal, bytes } from '#lib/vault-crypto.ts';
+	import { wrapTo, seal, bytes } from '#lib/vault-crypto.ts';
+	import { verifyDeviceFingerprint } from '#lib/device-approval.ts';
 	import { orgContext, context } from '#lib/vault-format.ts';
 	let { data } = $props();
 	let enrollment = $state<{ id: string; publicKey: string } | null>(null);
@@ -15,25 +15,39 @@
 	let busy = $state(false);
 	let error = $state('');
 	let approved = $state(false);
-	onMount(async () => {
-		if (!data.userCode || data.verificationError) return;
-		try {
-			enrollment = await api(`/api/devices?code=${encodeURIComponent(data.userCode)}`);
-			workspaces = await api('/api/workspaces');
-		} catch (e) {
-			error = (e as Error).message;
-		}
+	$effect(() => {
+		const userCode = data.userCode;
+		verified = data.deviceFingerprint;
+		error = data.fingerprintError;
+		enrollment = null;
+		workspaces = [];
+		selected = [];
+		approved = false;
+		if (!userCode || data.verificationError) return;
+		let active = true;
+		Promise.all([
+			api<{ id: string; publicKey: string }>(`/api/devices?code=${encodeURIComponent(userCode)}`),
+			api<{ id: string; name: string }[]>('/api/workspaces')
+		])
+			.then(([device, availableWorkspaces]) => {
+				if (!active) return;
+				enrollment = device;
+				workspaces = availableWorkspaces;
+			})
+			.catch((e) => {
+				if (active) error = (e as Error).message;
+			});
+		return () => {
+			active = false;
+		};
 	});
 	async function approve() {
 		busy = true;
 		error = '';
 		try {
 			if (!enrollment) throw new Error('Enrollment not found');
-			if (
-				verified.trim().replace(/\s/g, '').toLowerCase() !==
-				(await fingerprint(enrollment.publicKey))
-			)
-				throw new Error('Paste the full device fingerprint printed by ve auth');
+			await verifyDeviceFingerprint(verified, enrollment.publicKey);
+			if (!selected.length) throw new Error('Choose at least one workspace to authorize.');
 			const envelopes = [];
 			for (const org of selected) {
 				const snapshot = await api<Snapshot>(`/api/workspaces/${org}`);
@@ -87,6 +101,11 @@
 			Enter device code
 		</h1>
 		<form class="mt-6 flex gap-2" action="/device">
+			{#if data.deviceFingerprint}<input
+					type="hidden"
+					name="fingerprint"
+					value={data.deviceFingerprint}
+				/>{/if}
 			<Input name="user_code" aria-label="Device code" placeholder="ABCD-EFGH" required /><Button
 				type="submit">Continue</Button
 			>
@@ -102,10 +121,20 @@
 				>Device fingerprint from your terminal<Input
 					class="mt-2"
 					id="device-fingerprint"
+					aria-describedby="fingerprint-help"
+					autocomplete="off"
+					spellcheck={false}
 					placeholder="Paste the full fingerprint"
 					bind:value={verified}
 				/></label
 			>
+			<p id="fingerprint-help" class="mt-2 text-xs text-muted-foreground">
+				{#if data.deviceFingerprint}
+					Filled from your CLI link. Only authorize a sign-in you started in your terminal.
+				{:else}
+					Paste the full fingerprint shown by ve auth in your terminal.
+				{/if}
+			</p>
 			<fieldset class="mt-6 space-y-3">
 				<legend class="mb-3 text-sm font-medium">Workspace access</legend
 				>{#each workspaces as workspace}<label class="flex gap-3 text-sm"
