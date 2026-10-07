@@ -7,12 +7,28 @@ import {
 	identityKeyPair,
 	wrapTo,
 	unwrapFrom,
-	derivePrf
+	derivePrf,
+	estimateSecretLength
 } from '../src/lib/vault-crypto';
 import { context, secretContext, folderContext, orgContext } from '../src/lib/vault-format';
 import { validateTree } from '../src/lib/server/vault-validation';
 import { permits } from '../src/lib/permissions';
 describe('versioned vault encryption', () => {
+	test('estimates secret byte lengths without decrypting, including base64 padding', async () => {
+		for (const value of ['', 'a', 'ab', 'abc', 'a'.repeat(256), 'æøå🔐']) {
+			const sealed = await seal(randomKey(), bytes(value), 'length');
+			expect(estimateSecretLength(sealed)).toBe(bytes(value).length);
+			expect(estimateSecretLength(sealed.replace(/=+$/, ''))).toBe(bytes(value).length);
+			expect(estimateSecretLength(sealed.replace(/\+/g, '-').replace(/\//g, '_'))).toBe(
+				bytes(value).length
+			);
+		}
+	});
+	test('does not infer lengths from invalid or unknown envelopes', () => {
+		for (const value of ['', 'v2.' + 'A'.repeat(48), 'v1.AAAA', 'v1.%%%']) {
+			expect(estimateSecretLength(value)).toBeNull();
+		}
+	});
 	test('authenticates organization, folder, secret name, ID and epoch', async () => {
 		const key = randomKey();
 		const ctx = secretContext('org', 'folder', 'id', 'NAME', 1);

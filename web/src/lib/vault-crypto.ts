@@ -10,6 +10,15 @@ export function encode(value: Uint8Array | ArrayBuffer): string {
 export const decode = (value: string): Uint8Array<ArrayBuffer> =>
 	Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 export const randomKey = () => crypto.getRandomValues(new Uint8Array(32));
+export function estimateSecretLength(envelope: string): number | null {
+	if (!envelope.startsWith('v1.')) return null;
+	try {
+		const length = decode(envelope.slice(3)).length - 28;
+		return length >= 0 ? length : null;
+	} catch {
+		return null;
+	}
+}
 export async function seal(
 	key: Uint8Array<ArrayBuffer>,
 	value: Uint8Array<ArrayBuffer>,

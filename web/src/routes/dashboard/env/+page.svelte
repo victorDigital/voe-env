@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { useHotkeys } from '#lib/hotkeys/manager.svelte.ts';
 	import ActionError from '#lib/components/ActionError.svelte';
+	import SecretValue from '#lib/components/SecretValue.svelte';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Button } from '#lib/components/ui/button/index.ts';
 	import { Input } from '#lib/components/ui/input/index.ts';
@@ -38,7 +39,11 @@
 	let snapshot = $state<Snapshot | null>(null);
 	let folderId = $state('');
 	let values = $state<Record<string, string>>({});
-	let revealed = $state(false);
+	let revealedIds = $state<Record<string, boolean>>({});
+	let animateReveal = $state(false);
+	let revealed = $derived(
+		!!snapshot?.secrets.some((secret) => secret.folderId === folderId && revealedIds[secret.id])
+	);
 	let busy = $derived(dashboard.working);
 	let error = $state('');
 	let notice = $state('');
@@ -112,7 +117,7 @@
 			secretValue = '';
 			secretOpen = false;
 			folderOpen = false;
-			revealed = false;
+			revealedIds = {};
 		}
 	});
 	onMount(() => {
@@ -141,7 +146,7 @@
 			folderId = '';
 			treeOpen = false;
 			query = '';
-			revealed = false;
+			revealedIds = {};
 		}
 		if (!id) {
 			snapshot = null;
@@ -182,9 +187,23 @@
 		error = '';
 	}
 	function navigate(id: string) {
+		revealedIds = {};
 		folderId = id;
 		query = '';
 		notice = '';
+	}
+	function toggleValues(event: MouseEvent) {
+		animateReveal = event.detail > 0;
+		const show = !revealed;
+		revealedIds = Object.fromEntries(
+			(snapshot?.secrets || [])
+				.filter((secret) => secret.folderId === folderId && values[secret.id] !== undefined)
+				.map((secret) => [secret.id, show])
+		);
+	}
+	function toggleValue(id: string, event: MouseEvent) {
+		animateReveal = event.detail > 0;
+		revealedIds[id] = !revealedIds[id];
 	}
 	async function copy(value: string) {
 		try {
@@ -376,7 +395,11 @@
 								size="icon"
 								aria-label={revealed ? 'Hide values' : 'Show values'}
 								title={revealed ? 'Hide values' : 'Show values'}
-								onclick={() => (revealed = !revealed)}
+								aria-pressed={revealed}
+								disabled={!snapshot?.secrets.some(
+									(secret) => secret.folderId === folderId && values[secret.id] !== undefined
+								)}
+								onclick={toggleValues}
 								hotKey={{ keys: 'shift+e', description: 'Toggle secret values', category: 'Vault' }}
 								>{#if revealed}<RiEyeOffLine />{:else}<RiEyeLine />{/if}</Button
 							>
@@ -406,7 +429,7 @@
 				{#if secrets.length}
 					<div class="border-y">
 						<Table.Root class="w-full table-fixed text-xs" aria-label="Secrets">
-							<colgroup><col class="w-[48%] sm:w-[46%]" /><col /><col class="w-20" /></colgroup>
+							<colgroup><col class="w-[40%] sm:w-[46%]" /><col /><col class="w-24" /></colgroup>
 							<Table.Header
 								><Table.Row class="border-0 hover:bg-transparent">
 									<Table.Head class="h-0 p-0"><span class="sr-only">Name</span></Table.Head>
@@ -415,19 +438,33 @@
 								</Table.Row></Table.Header
 							>
 							<Table.Body>
-								{#each secrets as secret}<Table.Row class="group"
+								{#each secrets as secret (secret.id)}<Table.Row class="group"
 										><Table.Cell class="max-w-0 py-3.5 pl-3"
 											><span class="block truncate font-mono text-xs" title={secret.name}
 												>{secret.name}</span
 											></Table.Cell
 										><Table.Cell class="max-w-0"
-											><code
-												class="block truncate text-xs text-muted-foreground"
-												class:tracking-widest={!revealed}
-												>{revealed ? (values[secret.id] ?? 'Locked') : '••••••••••••'}</code
-											></Table.Cell
+											><SecretValue
+												encryptedValue={secret.encryptedValue}
+												value={values[secret.id]}
+												revealed={!!revealedIds[secret.id]}
+												animate={animateReveal}
+											/></Table.Cell
 										><Table.Cell class="px-1"
 											><div class="flex justify-end">
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													aria-label={`${revealedIds[secret.id] ? 'Hide' : 'Show'} ${secret.name}`}
+													title={revealedIds[secret.id] ? 'Hide value' : 'Show value'}
+													aria-pressed={!!revealedIds[secret.id]}
+													disabled={values[secret.id] === undefined}
+													onclick={(event) => toggleValue(secret.id, event)}
+												>
+													{#if revealedIds[secret.id]}<RiEyeOffLine
+															class="size-3.5"
+														/>{:else}<RiEyeLine class="size-3.5" />{/if}
+												</Button>
 												<Button
 													variant="ghost"
 													size="icon-sm"
